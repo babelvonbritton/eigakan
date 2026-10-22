@@ -17,5 +17,12 @@ ROOM_ORIGIN = "https://eigakan-room.<your-subdomain>.workers.dev"
 # (Workers & Pages → eigakan-path-proxy → Settings → Domains & Routes → Add route):
 #   <your-domain>/eigakan*       zone: <your-domain>
 #   <your-domain>/eigakan-api*   zone: <your-domain>
+#   <your-domain>/eigakan-login* zone: <your-domain>  (the password gate page)
+#
+# Shared-password gate: set the SITE_PASSWORD secret on this worker in the
+# dashboard (Settings → Variables and Secrets → Add → Secret) — the value
+# never lives in this file or the repo. With the secret set, /eigakan*
+# requires the gate cookie from /eigakan-login and /eigakan-api* answers
+# 401 without it. Leave it unset to run without the gate (local dev).
 # A route only intercepts its own path prefix; the rest of the domain's site
 # is unaffected.

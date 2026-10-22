@@ -86,3 +86,68 @@ try {
 }
 
 console.log(`\n${passed}/10 path-proxy checks passed`);
+
+// ——— shared-password gate (env.SITE_PASSWORD set) ———
+// (the main suite restored the real fetch in its finally block; stub again)
+globalThis.fetch = async (req) => {
+  lastTarget = req.url;
+  return new Response('origin-body', { status: 200, headers: { 'x-origin': 'stub' } });
+};
+const gatedEnv = { ...env, SITE_PASSWORD: 'correct horse battery' };
+const grun = async (path, init) => worker.fetch(new Request('https://example.com' + path, init), gatedEnv);
+
+await check('gate: unauthenticated site path redirects to login', async () => {
+  const res = await grun('/eigakan/');
+  assert.equal(res.status, 302);
+  assert.equal(new URL(res.headers.get('location')).pathname, '/eigakan-login');
+});
+
+await check('gate: login page is served', async () => {
+  const res = await grun('/eigakan-login');
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.ok(body.includes('EIGAKAN') && body.includes('type="password"'));
+});
+
+await check('gate: wrong password gets no cookie', async () => {
+  const res = await grun('/eigakan-login', {
+    method: 'POST',
+    body: new URLSearchParams({ password: 'nope' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('set-cookie'), null);
+});
+
+let gateCookie = '';
+await check('gate: correct password sets the gate cookie and redirects in', async () => {
+  const res = await grun('/eigakan-login', {
+    method: 'POST',
+    body: new URLSearchParams({ password: 'correct horse battery' }),
+  });
+  assert.equal(res.status, 302);
+  assert.equal(new URL(res.headers.get('location')).pathname, '/eigakan/');
+  gateCookie = (res.headers.get('set-cookie') ?? '').split(';')[0];
+  assert.ok(gateCookie.startsWith('eigakan_gate='));
+});
+
+await check('gate: cookie admits the site', async () => {
+  const res = await grun('/eigakan/', { headers: { Cookie: gateCookie } });
+  assert.equal(res.status, 200);
+  assert.equal(lastTarget, 'https://eigakan.pages.dev/');
+});
+
+await check('gate: API refuses without the cookie (401)', async () => {
+  const res = await grun('/eigakan-api/health');
+  assert.equal(res.status, 401);
+});
+
+await check('gate: API forwards with the cookie', async () => {
+  const res = await grun('/eigakan-api/health', { headers: { Cookie: gateCookie } });
+  assert.equal(res.status, 200);
+  assert.equal(lastTarget, 'https://eigakan-room.example.workers.dev/health');
+});
+
+await check('gate: a forged cookie is rejected', async () => {
+  const res = await grun('/eigakan/', { headers: { Cookie: 'eigakan_gate=deadbeef' } });
+  assert.equal(res.status, 302);
+});

@@ -119,13 +119,24 @@ live at `https://<your-domain>/eigakan` behind the path-proxy worker in
    — then redeploy Pages so the build picks them up.
 3. Deploy the proxy as a third Git-connected worker
    (`proxy/wrangler.toml`; set `ROOM_ORIGIN` to the Step 1 worker URL
-   first) and add two routes on your domain's zone:
-   `<your-domain>/eigakan*` and `<your-domain>/eigakan-api*`.
+   first) and add three routes on your domain's zone:
+   `<your-domain>/eigakan*`, `<your-domain>/eigakan-api*` and
+   `<your-domain>/eigakan-login*`.
 
 The proxy strips the prefix and forwards to the Pages / worker origins
 (WebSocket upgrades pass through), so visitors see one origin:
-`/eigakan` for the site, `/eigakan-api` for the rooms. Routing logic is
-covered by `npm run test:proxy` (10 checks).
+`/eigakan` for the site, `/eigakan-api` for the rooms. Routing and the
+gate below are covered by `npm run test:proxy` (18 checks).
+
+**Optional shared-password gate:** set the `SITE_PASSWORD` secret on the
+proxy worker (dashboard → Settings → Variables and Secrets; the value
+never lives in the repo). The whole path then sits behind one shared
+password: a themed login page at `/eigakan-login`, a 30-day HttpOnly
+cookie (an HMAC keyed by the password, so rotating the password logs
+everyone out at once), and a hard 401 for API calls without the cookie.
+Leave the secret unset to run without the gate — e.g. local development.
+For local gate testing, put `SITE_PASSWORD=…` in `proxy/.dev.vars`
+(git-ignored) and run `wrangler dev --config proxy/wrangler.toml`.
 
 ## Private movie files via R2 (optional)
 
