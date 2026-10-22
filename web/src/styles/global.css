@@ -1,0 +1,282 @@
+/*
+ * Eigakan design system — cinematic black, luxurious orange.
+ *
+ * The orange is a rich amber-to-burnt-orange ramp with a restrained gold
+ * sheen, used sparingly on near-black surfaces. No flat "safety orange",
+ * no pastels: think polished brass and ember, not traffic cones.
+ */
+
+:root {
+  /* Cinematic blacks (Netflix-depth, warm-tinted) */
+  --black: #050403;
+  --ink: #0b0908;
+  --surface: #141110;
+  --surface-2: #1d1917;
+  --surface-3: #292019;
+  --line: #2e2620;
+
+  /* Luxurious orange ramp */
+  --ember-700: #8a3c00;
+  --ember-600: #b34d00;
+  --ember-500: #d96a06; /* deep burnt orange */
+  --amber-500: #ee8a1d; /* rich marigold amber — primary */
+  --amber-400: #f79d35;
+  --gold-300: #ffc15c; /* sheen/highlight only */
+  --gold-200: #ffd9a0;
+
+  --brand-gradient: linear-gradient(135deg, var(--amber-400) 0%, var(--amber-500) 42%, var(--ember-500) 78%, var(--ember-600) 100%);
+  --brand-sheen: linear-gradient(180deg, rgba(255, 193, 92, 0.35), rgba(255, 193, 92, 0) 55%);
+
+  /* Text on black */
+  --text: #f5efe8;
+  --text-dim: #c9bcab;
+  --text-faint: #8f8272;
+
+  --radius: 10px;
+  --shadow-brand: 0 10px 34px rgba(238, 138, 29, 0.28), 0 2px 8px rgba(0, 0, 0, 0.6);
+  --font-display: 'Bebas Neue', 'Arial Narrow', sans-serif;
+  --font-body: 'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--black);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; }
+
+/* ——— Wordmark ——— */
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  background: linear-gradient(180deg, var(--gold-300) 0%, var(--amber-500) 55%, var(--ember-500) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-decoration: none;
+  user-select: none;
+}
+.wordmark small {
+  font-size: 0.42em;
+  letter-spacing: 0.34em;
+  vertical-align: 0.9em;
+  margin-left: 0.35em;
+  color: var(--text-faint);
+  -webkit-text-fill-color: var(--text-faint);
+}
+
+/* ——— Nav (Netflix-style fixed bar that solidifies on scroll) ——— */
+.nav {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.9rem 4vw;
+  background: linear-gradient(180deg, rgba(5, 4, 3, 0.85), rgba(5, 4, 3, 0));
+  transition: background 0.35s ease;
+}
+.nav.solid { background: rgba(8, 6, 5, 0.96); box-shadow: 0 1px 0 var(--line); }
+.nav .links { display: flex; gap: 1.4rem; font-size: 0.9rem; color: var(--text-dim); }
+.nav .links a { text-decoration: none; }
+.nav .links a:hover { color: var(--text); }
+.nav .spacer { flex: 1; }
+.nav .room-chip {
+  font-size: 0.82rem;
+  color: var(--gold-200);
+  border: 1px solid var(--ember-600);
+  border-radius: 999px;
+  padding: 0.32rem 0.85rem;
+  background: rgba(217, 106, 6, 0.12);
+}
+
+/* ——— Buttons ——— */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 600 1rem var(--font-body);
+  padding: 0.78rem 1.7rem;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.btn-brand {
+  color: #1d0f00;
+  background: var(--brand-gradient);
+  box-shadow: var(--shadow-brand), inset 0 1px 0 rgba(255, 217, 160, 0.55);
+}
+.btn-brand:hover { filter: brightness(1.07); transform: translateY(-1px); }
+.btn-brand:active { transform: translateY(0); }
+.btn-ghost {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.btn-ghost:hover { background: rgba(255, 255, 255, 0.16); }
+.btn[disabled] { opacity: 0.55; cursor: wait; transform: none; }
+
+/* ——— Hero (billboard) ——— */
+.hero {
+  position: relative;
+  min-height: 92vh;
+  display: flex;
+  align-items: center;
+  padding: 7rem 4vw 5rem;
+  overflow: hidden;
+  background:
+    radial-gradient(1100px 520px at 78% 18%, rgba(238, 138, 29, 0.22), rgba(238, 138, 29, 0) 60%),
+    radial-gradient(760px 480px at 12% 88%, rgba(179, 77, 0, 0.16), rgba(179, 77, 0, 0) 60%),
+    linear-gradient(180deg, #0d0a08 0%, var(--black) 78%);
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 22vh;
+  background: linear-gradient(180deg, rgba(5, 4, 3, 0), var(--black));
+  pointer-events: none;
+}
+.hero-inner { position: relative; z-index: 1; max-width: 660px; }
+.hero .eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.32em;
+  font-size: 0.78rem;
+  color: var(--gold-300);
+  margin: 0 0 1.1rem;
+}
+.hero h1 {
+  font-size: clamp(2.6rem, 6vw, 4.6rem);
+  line-height: 1.02;
+  margin: 0 0 1.2rem;
+  font-weight: 800;
+}
+.hero h1 .accent {
+  background: linear-gradient(92deg, var(--gold-300), var(--amber-500) 55%, var(--ember-500));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero p.lede { font-size: 1.16rem; line-height: 1.55; color: var(--text-dim); margin: 0 0 2rem; max-width: 34rem; }
+
+.panel {
+  background: linear-gradient(180deg, rgba(29, 25, 23, 0.92), rgba(16, 13, 11, 0.96));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.3rem;
+  backdrop-filter: blur(6px);
+}
+.panel h2 { margin: 0 0 0.9rem; font-size: 1.05rem; }
+.row { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+.field {
+  flex: 1 1 220px;
+  background: #0d0b0a;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: 500 1.02rem var(--font-body);
+  letter-spacing: 0.06em;
+  padding: 0.78rem 1rem;
+  outline: none;
+}
+.field:focus { border-color: var(--amber-500); box-shadow: 0 0 0 3px rgba(238, 138, 29, 0.22); }
+.field.code { text-transform: uppercase; font-weight: 700; }
+.hint { color: var(--text-faint); font-size: 0.86rem; margin-top: 0.7rem; }
+.error { color: #ff9d7a; font-size: 0.9rem; margin-top: 0.7rem; min-height: 1.1em; }
+
+/* ——— Content rows (Netflix-style shelves) ——— */
+.shelf { padding: 2.6rem 4vw 0.6rem; }
+.shelf h2 { font-size: 1.25rem; margin: 0 0 1rem; color: var(--text); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.9rem; }
+.tile {
+  position: relative;
+  border-radius: var(--radius);
+  background: linear-gradient(160deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--line);
+  padding: 1.15rem 1.15rem 1rem;
+  min-height: 148px;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  overflow: hidden;
+}
+.tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(420px 200px at 85% -10%, rgba(238, 138, 29, 0.18), rgba(238, 138, 29, 0) 65%);
+  pointer-events: none;
+}
+.tile:hover {
+  transform: scale(1.035);
+  border-color: var(--ember-600);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(238, 138, 29, 0.22);
+  z-index: 2;
+}
+.tile .kicker { font-size: 0.72rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold-300); }
+.tile h3 { margin: 0.45rem 0 0.5rem; font-size: 1.06rem; }
+.tile p { margin: 0; color: var(--text-dim); font-size: 0.92rem; line-height: 1.5; }
+
+footer.site {
+  padding: 3.2rem 4vw 2.4rem;
+  color: var(--text-faint);
+  font-size: 0.88rem;
+  border-top: 1px solid var(--line);
+  margin-top: 3.4rem;
+  background: var(--ink);
+}
+
+/* ——— Theater (room page) ——— */
+.theater { padding: 5.4rem 4vw 2rem; max-width: 1180px; margin: 0 auto; }
+.stage {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.65), 0 0 90px rgba(217, 106, 6, 0.07);
+  aspect-ratio: 16 / 9;
+}
+.stage .placeholder {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.8rem;
+  color: var(--text-faint); text-align: center; padding: 2rem;
+  background:
+    radial-gradient(700px 320px at 50% 0%, rgba(238, 138, 29, 0.13), rgba(238, 138, 29, 0) 65%),
+    #070505;
+}
+.stage video, .stage iframe.player-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000;
+}
+.stage .badge {
+  position: absolute; top: 0.9rem; left: 0.9rem; z-index: 5;
+  font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em;
+  padding: 0.35rem 0.7rem; border-radius: 999px;
+  background: rgba(5, 4, 3, 0.72); color: var(--gold-200);
+  border: 1px solid rgba(238, 138, 29, 0.45);
+  backdrop-filter: blur(4px);
+}
+.controls-bar {
+  display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: center;
+  margin-top: 1rem;
+}
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b5f50; display: inline-block; }
+.status-dot.on { background: var(--amber-500); box-shadow: 0 0 10px rgba(238, 138, 29, 0.8); }
+.status-text { color: var(--text-dim); font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.5rem; }
+input[type='file'].hidden { display: none; }
+.chat-log {
+  margin-top: 1rem; max-height: 180px; overflow: auto;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 0.8rem 1rem; background: var(--ink); font-size: 0.92rem; color: var(--text-dim);
+}
+.chat-log p { margin: 0.25rem 0; }
+.chat-log .me { color: var(--gold-200); }

@@ -1,0 +1,1 @@
+{"devDependencies":{"typescript":"^5.9.3","vitest":"^5.0.5"},"exports":{".":{"default":"./dist/index.js","types":"./dist/index.d.ts"}},"main":"./dist/index.js","name":"@eigakan/sync-core","private":true,"scripts":{"build":"tsc -p tsconfig.json","test":"vitest run","typecheck":"tsc -p tsconfig.json --noEmit"},"type":"module","types":"./dist/index.d.ts","version":"0.1.0"}

@@ -1,0 +1,112 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout>
+  <main>
+    <section class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">For exactly two viewers</p>
+        <h1>Movie night, <span class="accent">perfectly in sync.</span></h1>
+        <p class="lede">
+          Eigakan plays the same YouTube video, MP4 or local file on two screens at once.
+          Press play, pause or seek — your partner's player follows within a blink.
+          No accounts, no uploads of the video itself. Just a room code.
+        </p>
+
+        <div class="panel">
+          <h2>Start a room</h2>
+          <div class="row">
+            <button class="btn btn-brand" id="create-room" type="button">▶&ensp;Create room</button>
+          </div>
+          <p class="hint">You get a 6-character code. Send it to your one and only guest — the room locks at two.</p>
+          <h2 style="margin-top:1.4rem">Join a room</h2>
+          <form class="row" id="join-form">
+            <input class="field code" id="join-code" maxlength="6" placeholder="ROOM CODE" autocomplete="off" />
+            <button class="btn btn-ghost" type="submit">Join</button>
+          </form>
+          <p class="error" id="join-error"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="shelf" id="sources">
+      <h2>Watch anything, together</h2>
+      <div class="tiles">
+        <article class="tile">
+          <span class="kicker">Source 01</span>
+          <h3>YouTube</h3>
+          <p>Paste a YouTube link in the room. Both players load the same video and every control stays in sync — ads excluded, sadly, those are between you and YouTube.</p>
+        </article>
+        <article class="tile">
+          <span class="kicker">Source 02</span>
+          <h3>MP4 link</h3>
+          <p>A direct MP4 URL — for example a private, expiring link to your own file storage — plays in the built-in player with full seek sync.</p>
+        </article>
+        <article class="tile">
+          <span class="kicker">Source 03</span>
+          <h3>Local file</h3>
+          <p>Both pick the same file from your own devices. The file never leaves either machine — only play and pause travel.</p>
+        </article>
+        <article class="tile">
+          <span class="kicker">Private by design</span>
+          <h3>Two seats. Locked.</h3>
+          <p>Rooms are enforced on the server: a third connection is refused, full stop. Room codes use an alphabet with no look-alike characters.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="shelf" id="how">
+      <h2>How it works</h2>
+      <div class="tiles">
+        <article class="tile">
+          <span class="kicker">Step 1</span>
+          <h3>Create &amp; share</h3>
+          <p>One of you creates a room and shares the code or link. The other joins — that fills the room.</p>
+        </article>
+        <article class="tile">
+          <span class="kicker">Step 2</span>
+          <h3>Pick a source</h3>
+          <p>Paste a YouTube or MP4 link, or both select the same local file. Loading is itself a synced event.</p>
+        </article>
+        <article class="tile">
+          <span class="kicker">Step 3</span>
+          <h3>Watch in sync</h3>
+          <p>Play, pause, seek and speed travel between players with latency compensation, and a heartbeat quietly corrects drift.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site">
+    Eigakan — a two-person watch-together room. Built with Astro, Cloudflare Durable Objects and R2.
+  </footer>
+
+  <script>
+    import { generateRoomCode, normalizeRoomCode } from '@eigakan/sync-core';
+
+    // BASE_URL has no trailing slash when a base is set ('/eigakan'), and is
+    // '/' at the root — normalize once so joins below are always correct.
+    const rawBase = import.meta.env.BASE_URL as string;
+    const basePath = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
+
+    const createBtn = document.getElementById('create-room') as HTMLButtonElement | null;
+    createBtn?.addEventListener('click', () => {
+      const code = generateRoomCode();
+      window.location.href = `${basePath}watch?room=${code}&host=1`;
+    });
+
+    const form = document.getElementById('join-form') as HTMLFormElement | null;
+    const codeInput = document.getElementById('join-code') as HTMLInputElement | null;
+    const error = document.getElementById('join-error');
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const code = normalizeRoomCode(codeInput?.value ?? '');
+      if (!code) {
+        if (error) error.textContent = 'That code does not look right — 6 characters, no 0/O or 1/I.';
+        return;
+      }
+      window.location.href = `${basePath}watch?room=${code}`;
+    });
+  </script>
+</BaseLayout>

@@ -1,0 +1,211 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import StatusBar from '../components/StatusBar.astro';
+import SourcePanel from '../components/SourcePanel.astro';
+import ChatPanel from '../components/ChatPanel.astro';
+
+const roomParam = Astro.url.searchParams.get('room') ?? '';
+---
+
+<BaseLayout title={`Eigakan Room ${roomParam}`} roomCode={roomParam || undefined}>
+  <main class="theater">
+    <div class="stage" id="stage">
+      <div class="placeholder" id="placeholder">
+        <div class="wordmark" style="font-size:2.4rem">EIGAKAN</div>
+        <p>
+          Waiting for a video.<br />
+          Paste a YouTube or MP4 link below — or both pick the same local file.
+        </p>
+      </div>
+      <video id="html5-player" controls playsinline style="display:none"></video>
+      <div id="yt-wrap" style="display:none; position:absolute; inset:0">
+        <div id="yt-player"></div>
+      </div>
+      <span class="badge" id="source-badge" style="display:none"></span>
+    </div>
+
+    <StatusBar />
+    <SourcePanel />
+    <ChatPanel />
+  </main>
+
+  <script>
+    import { normalizeRoomCode, parseVideoSource, type VideoSource } from '@eigakan/sync-core';
+    import { Html5PlayerAdapter, YouTubePlayerAdapter, type LocalControlAction, type PlayerAdapter } from '../lib/players';
+    import { RoomClient } from '../lib/room-client';
+
+    const params = new URLSearchParams(window.location.search);
+    const code = normalizeRoomCode(params.get('room') ?? '');
+
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const partnerBuffering = document.getElementById('partner-buffering');
+    const placeholder = document.getElementById('placeholder');
+    const badge = document.getElementById('source-badge');
+    const videoEl = document.getElementById('html5-player') as HTMLVideoElement;
+    const ytWrap = document.getElementById('yt-wrap');
+    const sourceError = document.getElementById('source-error');
+    const chatLog = document.getElementById('chat-log');
+
+    function setStatus(text: string, on: boolean) {
+      if (statusText) statusText.textContent = text;
+      statusDot?.classList.toggle('on', on);
+    }
+
+    if (!code) {
+      setStatus('Invalid room code — go back and create or join a room.', false);
+    } else {
+      const html5 = new Html5PlayerAdapter(videoEl, 'mp4');
+      const youtube = new YouTubePlayerAdapter('yt-player');
+
+      const showHtml5 = () => {
+        videoEl.style.display = 'block';
+        if (ytWrap) ytWrap.style.display = 'none';
+        if (placeholder) placeholder.style.display = 'none';
+      };
+      const showYouTube = () => {
+        videoEl.style.display = 'none';
+        if (ytWrap) ytWrap.style.display = 'block';
+        if (placeholder) placeholder.style.display = 'none';
+      };
+
+      /**
+       * Facade adapter: the sync engine talks to one player; this routes to
+       * whichever concrete adapter owns the current source.
+       */
+      class FacadePlayer implements PlayerAdapter {
+        active: PlayerAdapter = html5;
+        get kind() {
+          return this.active.kind;
+        }
+        async load(source: VideoSource): Promise<void> {
+          if (source.kind === 'youtube') {
+            this.active = youtube;
+            showYouTube();
+          } else {
+            this.active = html5;
+            showHtml5();
+          }
+          await this.active.load(source);
+        }
+        play() { this.active.play(); }
+        pause() { this.active.pause(); }
+        seekTo(s: number) { this.active.seekTo(s); }
+        setRate(r: number) { this.active.setRate(r); }
+        getTime() { return this.active.getTime(); }
+        getRate() { return this.active.getRate(); }
+        isPlaying() { return this.active.isPlaying(); }
+        isBuffering() { return this.active.isBuffering(); }
+        onLocalControl(handler: (a: LocalControlAction) => void) {
+          const offA = html5.onLocalControl(handler);
+          const offB = youtube.onLocalControl(handler);
+          return () => { offA(); offB(); };
+        }
+        destroy() { html5.destroy(); youtube.destroy(); }
+      }
+
+      const facade = new FacadePlayer();
+      const apiBase = (import.meta.env.PUBLIC_ROOM_API_URL as string) || 'http://localhost:8787';
+      const rawBase = import.meta.env.BASE_URL as string;
+      const basePath = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
+
+      const client = new RoomClient(apiBase, code, facade, {
+        onStatus(status) {
+          if (status === 'waiting') setStatus(`Room ${code} — waiting for your partner. Share the invite link.`, true);
+          else if (status === 'paired') setStatus('Partner connected — you are in sync. 🍿', true);
+          else if (status === 'full') setStatus('This room is already full (2 viewers).', false);
+          else if (status === 'connecting') setStatus('Connecting…', false);
+          else setStatus('Disconnected.', false);
+        },
+        onChat(text, mine) {
+          const p = document.createElement('p');
+          if (mine) p.className = 'me';
+          p.textContent = (mine ? 'You: ' : 'Partner: ') + text;
+          chatLog?.appendChild(p);
+          if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
+        },
+        onPartnerBuffering(buffering) {
+          if (partnerBuffering) partnerBuffering.style.display = buffering ? 'inline-flex' : 'none';
+        },
+        onSourceLoaded(source) {
+          if (badge) {
+            badge.style.display = 'inline-block';
+            badge.textContent =
+              source.kind === 'youtube'
+                ? 'YOUTUBE'
+                : source.kind === 'mp4'
+                  ? 'MP4'
+                  : source.kind === 'hls'
+                    ? 'HLS • ADAPTIVE'
+                    : 'LOCAL FILE';
+          }
+          if (source.kind === 'local-file') {
+            // Show the video element so this viewer can pick their copy.
+            facade.active = html5;
+            showHtml5();
+            if (sourceError) sourceError.textContent = 'Your partner loaded a local file — pick the same file with “Use a local file…” to watch your copy in sync.';
+          }
+        },
+      });
+
+      client.connect();
+
+      // ——— source loading UI ———
+      const sourceForm = document.getElementById('source-form') as HTMLFormElement;
+      const sourceInput = document.getElementById('source-input') as HTMLInputElement;
+      sourceForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const source = parseVideoSource(sourceInput.value);
+        if (!source) {
+          if (sourceError) sourceError.textContent = 'That link is not a YouTube or MP4 source I can play.';
+          return;
+        }
+        if (sourceError) sourceError.textContent = '';
+        client.loadSource(source);
+      });
+
+      // ——— private-R2 HLS: mint a signed playlist URL, then load it for both ———
+      const hlsForm = document.getElementById('hls-form') as HTMLFormElement;
+      const hlsPrefixInput = document.getElementById('hls-prefix-input') as HTMLInputElement;
+      hlsForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          if (sourceError) sourceError.textContent = '';
+          const url = await client.fetchHlsUrl(hlsPrefixInput.value);
+          client.loadSource({ kind: 'hls', ref: url });
+        } catch (err) {
+          if (sourceError) sourceError.textContent = err instanceof Error ? err.message : 'Could not load that R2 HLS folder.';
+        }
+      });
+
+      const fileInput = document.getElementById('file-input') as HTMLInputElement;
+      document.getElementById('pick-file')?.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        facade.active = html5;
+        showHtml5();
+        client.loadLocalFile(file, html5);
+      });
+
+      // ——— invite + chat UI ———
+      document.getElementById('copy-invite')?.addEventListener('click', async () => {
+        const link = `${window.location.origin}${basePath}watch?room=${code}`;
+        try {
+          await navigator.clipboard.writeText(link);
+          setStatus('Invite link copied — send it to your partner.', true);
+        } catch {
+          window.prompt('Copy your invite link:', link);
+        }
+      });
+
+      const chatForm = document.getElementById('chat-form') as HTMLFormElement;
+      const chatInput = document.getElementById('chat-input') as HTMLInputElement;
+      chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        client.sendChat(chatInput.value);
+        chatInput.value = '';
+      });
+    }
+  </script>
+</BaseLayout>

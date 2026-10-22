@@ -1,0 +1,33 @@
+{
+  "description": "Watch together for two: sync YouTube, MP4 and local files between exactly two viewers. Astro + Cloudflare Workers/Durable Objects + R2.",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "name": "eigakan-watch-together",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:core && npm run build:web",
+    "build:core": "npm run build --workspace @eigakan/sync-core",
+    "build:web": "npm run build --workspace @eigakan/web",
+    "dev": "npm run build:core && concurrently -k -n worker,web -c yellow,cyan \"npm run dev:worker\" \"npm run dev:web\"",
+    "dev:web": "npm run dev --workspace @eigakan/web",
+    "dev:worker": "npm run dev --workspace @eigakan/worker",
+    "test": "npm run build:core && npm run test --workspace @eigakan/sync-core",
+    "test:e2e:worker": "npm run build:core && node scripts/e2e-worker.mjs",
+    "typecheck": "npm run build:core && npm run typecheck --workspace @eigakan/web && npm run typecheck --workspace @eigakan/worker && npm run typecheck --workspace @eigakan/sync-core",
+    "verify": "npm run typecheck && npm run test && npm run build",
+    "test:hls": "node scripts/test-hls.mjs",
+    "test:proxy": "node scripts/test-proxy.mjs"
+  },
+  "type": "module",
+  "version": "0.4.0",
+  "workspaces": [
+    "web",
+    "worker",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  },
+  "license": "MIT"
+}

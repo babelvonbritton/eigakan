@@ -1,0 +1,22 @@
+name = "eigakan-room"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# One Durable Object instance per room code. SQLite-backed so the class is
+# available on the Workers Free plan.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# R2 access is NOT a bucket binding here on purpose: movie delivery uses
+# presigned URLs generated from Worker secrets (R2_ACCOUNT_ID,
+# R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET) so the bucket itself
+# stays private and links expire. Set secrets with:
+#   wrangler secret put R2_ACCESS_KEY_ID
+# Create the API token scoped to a single bucket (Object Read only is
+# enough for presigning GET URLs).

@@ -1,0 +1,26 @@
+---
+/** Source loader: paste a YouTube / MP4 / HLS link for both viewers, pick a local file, or load an HLS ladder from the private R2 bucket by its folder prefix. */
+---
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Play something</h2>
+  <form class="row" id="source-form">
+    <input class="field" id="source-input" placeholder="YouTube link, MP4 URL, or HLS master playlist (.m3u8)" autocomplete="off" />
+    <button class="btn btn-brand" type="submit">Load for both</button>
+    <button class="btn btn-ghost" id="pick-file" type="button">Use a local file…</button>
+    <input class="hidden" type="file" id="file-input" accept="video/*,.mkv" />
+  </form>
+  <form class="row" id="hls-form" style="margin-top:0.75rem">
+    <input class="field" id="hls-prefix-input" placeholder="R2 HLS folder, e.g. movie-hls (private bucket)" autocomplete="off" />
+    <button class="btn btn-ghost" type="submit">Load R2 HLS for both</button>
+  </form>
+  <p class="hint">
+    HLS links adapt quality to each viewer's connection (great for R2-hosted movies — see
+    <code>scripts/encode-hls.sh</code>). For a ladder in the <em>private</em> R2 bucket, use the
+    R2 HLS folder field: the worker mints a signed playlist URL for room members only — a single
+    presigned <code>master.m3u8</code> link cannot authorize the rendition playlists and segments
+    under it. Local file: your partner must pick the <em>same file</em> on their device too — the
+    file itself never travels, only play / pause / seek do.
+  </p>
+  <p class="error" id="source-error"></p>
+</div>

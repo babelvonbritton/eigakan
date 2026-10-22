@@ -1,0 +1,1 @@
+{"dependencies":{"@eigakan/sync-core":"*","@fontsource/bebas-neue":"^5.2.7","astro":"^7.4.0","hls.js":"^1.7.3"},"devDependencies":{"@astrojs/check":"^0.9.10","typescript":"^5.9.3"},"name":"@eigakan/web","private":true,"scripts":{"build":"astro build","dev":"astro dev","preview":"astro preview","typecheck":"astro check"},"type":"module","version":"0.1.0"}

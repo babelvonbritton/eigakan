@@ -1,0 +1,21 @@
+# Eigakan path proxy — serves the Pages site at https://<domain>/eigakan and
+# the room worker at https://<domain>/eigakan-api on an existing domain.
+# See ../DEPLOY-CHECKLIST.md "Step 2b" for the deployment order.
+name = "eigakan-path-proxy"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# The Pages project's own origin (where the proxy fetches the site from).
+PAGES_ORIGIN = "https://eigakan.pages.dev"
+# The room worker's own origin. Replace <your-subdomain> with the workers.dev
+# subdomain shown after the Step 1 worker deploy.
+ROOM_ORIGIN = "https://eigakan-room.<your-subdomain>.workers.dev"
+
+# Routes are NOT set here on purpose: they attach this worker to YOUR domain,
+# so add them in the Cloudflare dashboard after deploying this worker
+# (Workers & Pages → eigakan-path-proxy → Settings → Domains & Routes → Add route):
+#   <your-domain>/eigakan*       zone: <your-domain>
+#   <your-domain>/eigakan-api*   zone: <your-domain>
+# A route only intercepts its own path prefix; the rest of the domain's site
+# is unaffected.
