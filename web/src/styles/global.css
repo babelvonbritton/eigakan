@@ -280,3 +280,5 @@ input[type='file'].hidden { display: none; }
 }
 .chat-log p { margin: 0.25rem 0; }
 .chat-log .me { color: var(--gold-200); }
+
+.icon { vertical-align: -2px; flex: none; }

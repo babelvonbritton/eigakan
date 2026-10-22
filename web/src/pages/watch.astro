@@ -112,7 +112,7 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
       const client = new RoomClient(apiBase, code, facade, {
         onStatus(status) {
           if (status === 'waiting') setStatus(`Room ${code} — waiting for your partner. Share the invite link.`, true);
-          else if (status === 'paired') setStatus('Partner connected — you are in sync. 🍿', true);
+          else if (status === 'paired') setStatus('Partner connected — you are in sync.', true);
           else if (status === 'full') setStatus('This room is already full (2 viewers).', false);
           else if (status === 'connecting') setStatus('Connecting…', false);
           else setStatus('Disconnected.', false);
