@@ -37,6 +37,16 @@ function newSessionToken(): string {
 interface SocketAttachment {
   peerId: string;
   sessionToken: string;
+  /** Display name chosen before entering (not an account — a room label). */
+  name: string;
+  /** The room's creator; only the host may terminate the room for everyone. */
+  isHost: boolean;
+}
+
+/** Sanitize a self-chosen display name: trimmed, capped, fallback provided. */
+function sanitizeDisplayName(raw: string | null): string {
+  const clean = (raw ?? '').replace(/\s+/g, ' ').trim().slice(0, 24);
+  return clean || 'Guest';
 }
 
 export class Room implements DurableObject {
@@ -92,7 +102,9 @@ export class Room implements DurableObject {
 
     const peerId = crypto.randomUUID();
     const sessionToken = newSessionToken();
-    server.serializeAttachment({ peerId, sessionToken } satisfies SocketAttachment);
+    const name = sanitizeDisplayName(url.searchParams.get('name'));
+    const isHost = url.searchParams.get('host') === '1';
+    server.serializeAttachment({ peerId, sessionToken, name, isHost } satisfies SocketAttachment);
 
     const welcome: ServerMessage = {
       type: 'welcome',
@@ -126,14 +138,39 @@ export class Room implements DurableObject {
       case 'heartbeat':
         outbound = { type: 'peer-heartbeat', heartbeat: message.heartbeat, serverReceivedAt };
         break;
-      case 'chat':
-        // Keep chat minimal in the MVP: plain text, capped.
+      case 'chat': {
+        // Keep chat minimal: plain text, capped, stamped with the sender's
+        // display name so the partner sees who said it.
+        let senderName = 'Guest';
+        try {
+          const att = ws.deserializeAttachment() as SocketAttachment | null;
+          if (att?.name) senderName = att.name;
+        } catch { /* keep fallback */ }
         outbound = {
           type: 'peer-chat',
           text: String(message.text).slice(0, 500),
+          name: senderName,
           serverReceivedAt,
         };
         break;
+      }
+      case 'end-room': {
+        // Host-only room termination: notify everyone, then close every
+        // socket. With no live sockets the room ceases to exist, and the
+        // session tokens die with them.
+        let isHost = false;
+        try {
+          const att = ws.deserializeAttachment() as SocketAttachment | null;
+          isHost = att?.isHost === true;
+        } catch { /* not host */ }
+        if (!isHost) return;
+        const ended = JSON.stringify({ type: 'room-ended' } satisfies ServerMessage);
+        for (const peer of this.state.getWebSockets()) {
+          try { peer.send(ended); } catch { /* closing anyway */ }
+          try { peer.close(1000, 'Room ended by the host'); } catch { /* already gone */ }
+        }
+        return;
+      }
     }
     if (!outbound) return;
 
@@ -159,7 +196,15 @@ export class Room implements DurableObject {
 
   private broadcastPresence(): void {
     const peers = this.state.getWebSockets();
-    const message: ServerMessage = { type: 'presence', peers: peers.length };
+    const names = peers.map((peer) => {
+      try {
+        const att = peer.deserializeAttachment() as SocketAttachment | null;
+        return att?.name || 'Guest';
+      } catch {
+        return 'Guest';
+      }
+    });
+    const message: ServerMessage = { type: 'presence', peers: peers.length, names };
     const payload = JSON.stringify(message);
     for (const peer of peers) {
       try {

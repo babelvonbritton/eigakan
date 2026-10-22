@@ -52,14 +52,17 @@ export interface Heartbeat {
 export type ClientMessage =
   | { type: 'event'; event: PlaybackEvent }
   | { type: 'heartbeat'; heartbeat: Heartbeat }
-  | { type: 'chat'; text: string; sentAt: number };
+  | { type: 'chat'; text: string; sentAt: number }
+  /** Host only: terminate the room for everyone. The code stops working. */
+  | { type: 'end-room' };
 
 export type ServerMessage =
   | { type: 'welcome'; peerId: string; peers: number; sessionToken: string }
-  | { type: 'presence'; peers: number }
+  | { type: 'presence'; peers: number; names: string[] }
   | { type: 'peer-event'; event: PlaybackEvent; serverReceivedAt: number }
   | { type: 'peer-heartbeat'; heartbeat: Heartbeat; serverReceivedAt: number }
-  | { type: 'peer-chat'; text: string; serverReceivedAt: number }
+  | { type: 'peer-chat'; text: string; name: string; serverReceivedAt: number }
+  | { type: 'room-ended' }
   | { type: 'room-full' }
   | { type: 'error'; message: string };
 

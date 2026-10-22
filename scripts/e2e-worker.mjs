@@ -49,9 +49,11 @@ class Client {
     this.inbox = [];
     this.waiters = [];
   }
-  connect(code) {
+  connect(code, query = '') {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`${WS_BASE}/rooms/${code}/ws`);
+      const ws = new WebSocket(`${WS_BASE}/rooms/${code}/ws${query}`);
+      this.closedFlag = false;
+      ws.addEventListener('close', () => { this.closedFlag = true; });
       this.ws = ws;
       const timer = setTimeout(() => reject(new Error(`${this.name}: open timeout`)), 8000);
       ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
@@ -121,12 +123,12 @@ try {
 
   // Two viewers join.
   const a = new Client('A'); clients.push(a);
-  await a.connect(CODE);
+  await a.connect(CODE, '?name=Hosty&host=1');
   const welcomeA = await a.waitFor((m) => m.type === 'welcome', 'welcome A');
   check('viewer A welcome, peers=1', welcomeA.peers === 1 && typeof welcomeA.peerId === 'string');
 
   const b = new Client('B'); clients.push(b);
-  await b.connect(CODE);
+  await b.connect(CODE, '?name=Guesty');
   const welcomeB = await b.waitFor((m) => m.type === 'welcome', 'welcome B');
   check('viewer B welcome, peers=2', welcomeB.peers === 2);
   await a.waitFor((m) => m.type === 'presence' && m.peers === 2, 'presence=2 at A');
@@ -152,6 +154,12 @@ try {
   b.send({ type: 'chat', text: 'ready when you are', sentAt: Date.now() });
   const chat = await a.waitFor((m) => m.type === 'peer-chat', 'chat relay at A');
   check('chat B -> A', chat.text === 'ready when you are');
+  check('chat carries the sender display name', chat.name === 'Guesty', `name=${chat.name}`);
+  await a.waitFor(
+    (m) => m.type === 'presence' && Array.isArray(m.names) && m.names.includes('Hosty') && m.names.includes('Guesty'),
+    'presence with display names at A',
+  );
+  check('presence carries both display names', true);
 
   // Third viewer is turned away — the max-2 rule, server-side.
   const c = new Client('C'); clients.push(c);
@@ -217,7 +225,18 @@ try {
   await d.connect(CODE);
   const welcomeD = await d.waitFor((m) => m.type === 'welcome', 'welcome D');
   check('new viewer can take the freed seat', welcomeD.peers === 2);
-  d.close();
+
+  // Host terminates the room: everyone is notified and disconnected.
+  d.send({ type: 'end-room' });
+  await sleep(400);
+  check('a non-host cannot end the room', !a.inbox.some((m) => m.type === 'room-ended'));
+  a.send({ type: 'end-room' });
+  await a.waitFor((m) => m.type === 'room-ended', 'room-ended at host');
+  await d.waitFor((m) => m.type === 'room-ended', 'room-ended at guest');
+  check('host end-room notifies both viewers', true);
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline && !(a.closedFlag && d.closedFlag)) await sleep(100);
+  check('server closes every socket on end-room', a.closedFlag && d.closedFlag);
 } catch (e) {
   check(`run completed without harness error (${e.message})`, false);
 } finally {

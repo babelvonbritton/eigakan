@@ -15,13 +15,24 @@ export type RoomStatus =
   | 'waiting' // alone in the room
   | 'paired' // partner present
   | 'full' // rejected: room already has two viewers
+  | 'ended' // the host terminated the room for everyone
   | 'closed';
 
 export interface RoomClientCallbacks {
   onStatus(status: RoomStatus, peers: number): void;
-  onChat(text: string, mine: boolean): void;
+  /** Display names of everyone currently in the room, in join order. */
+  onPresence(names: string[]): void;
+  /** `name` is the sender's display name (own name for own messages). */
+  onChat(text: string, mine: boolean, name: string): void;
   onPartnerBuffering(buffering: boolean): void;
   onSourceLoaded(source: VideoSource): void;
+}
+
+export interface RoomClientOptions {
+  /** Display name shown to the partner (a label, not an account). */
+  displayName: string;
+  /** True for the room's creator — enables endRoom(). */
+  isHost: boolean;
 }
 
 const HEARTBEAT_INTERVAL_MS = 4_000;
@@ -57,11 +68,14 @@ export class RoomClient {
     private readonly roomCode: string,
     private readonly player: PlayerAdapter,
     private readonly callbacks: RoomClientCallbacks,
+    private readonly options: RoomClientOptions = { displayName: 'Guest', isHost: false },
   ) {}
 
   connect(): void {
     const wsBase = this.apiBase.replace(/^http/, 'ws');
-    this.ws = new WebSocket(`${wsBase}/rooms/${this.roomCode}/ws`);
+    const query = new URLSearchParams({ name: this.options.displayName });
+    if (this.options.isHost) query.set('host', '1');
+    this.ws = new WebSocket(`${wsBase}/rooms/${this.roomCode}/ws?${query.toString()}`);
 
     this.ws.addEventListener('message', (event) => {
       let message: ServerMessage;
@@ -162,7 +176,16 @@ export class RoomClient {
     const trimmed = text.trim();
     if (!trimmed) return;
     this.send({ type: 'chat', text: trimmed, sentAt: Date.now() });
-    this.callbacks.onChat(trimmed, true);
+    this.callbacks.onChat(trimmed, true, this.options.displayName);
+  }
+
+  /**
+   * Host only: terminate the room for BOTH viewers. The server notifies the
+   * partner (room-ended) and closes every socket, which also kills every
+   * room-session token — the code and any shared links stop working.
+   */
+  endRoom(): void {
+    this.send({ type: 'end-room' });
   }
 
   close(): void {
@@ -180,10 +203,16 @@ export class RoomClient {
       // fallthrough — welcome also carries the peer count
       case 'presence': {
         const peers = message.peers;
+        if (message.type === 'presence') this.callbacks.onPresence(message.names);
         if (peers >= 2) this.callbacks.onStatus('paired', peers);
         else this.callbacks.onStatus('waiting', peers);
         break;
       }
+      case 'room-ended':
+        this.stopHeartbeat();
+        this.sessionToken = null;
+        this.callbacks.onStatus('ended', 0);
+        break;
       case 'room-full':
         this.callbacks.onStatus('full', 2);
         break;
@@ -194,7 +223,7 @@ export class RoomClient {
         this.applyRemoteHeartbeat(message.heartbeat);
         break;
       case 'peer-chat':
-        this.callbacks.onChat(message.text, false);
+        this.callbacks.onChat(message.text, false, message.name);
         break;
       case 'error':
         break;

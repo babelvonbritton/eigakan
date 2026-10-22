@@ -9,6 +9,14 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
 
 <BaseLayout title={`Eigakan Room ${roomParam}`} roomCode={roomParam || undefined}>
   <main class="theater">
+    <div class="panel" id="name-gate" style="display:none; margin-bottom:1rem">
+      <h2>Before you enter the room</h2>
+      <p class="hint">Pick a display name — the label your partner will see next to your messages. Not a login, just a name tag for this room.</p>
+      <form class="row" id="name-form" style="margin-top:0.7rem">
+        <input class="field" id="name-input" maxlength="24" placeholder="Your display name" autocomplete="off" />
+        <button class="btn btn-brand" type="submit">Enter room</button>
+      </form>
+    </div>
     <div class="stage" id="stage">
       <div class="placeholder" id="placeholder">
         <div class="wordmark" style="font-size:2.4rem">EIGAKAN</div>
@@ -46,6 +54,11 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
     const ytWrap = document.getElementById('yt-wrap');
     const sourceError = document.getElementById('source-error');
     const chatLog = document.getElementById('chat-log');
+    const nameGate = document.getElementById('name-gate');
+    const nameForm = document.getElementById('name-form') as HTMLFormElement | null;
+    const nameInput = document.getElementById('name-input') as HTMLInputElement | null;
+    const roomNames = document.getElementById('room-names');
+    const isHost = params.get('host') === '1';
 
     function setStatus(text: string, on: boolean) {
       if (statusText) statusText.textContent = text;
@@ -109,18 +122,27 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
       const rawBase = import.meta.env.BASE_URL as string;
       const basePath = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
 
-      const client = new RoomClient(apiBase, code, facade, {
+      let client: RoomClient | undefined;
+      const startRoom = (displayName: string) => {
+      client = new RoomClient(apiBase, code, facade, {
         onStatus(status) {
           if (status === 'waiting') setStatus(`Room ${code} — waiting for your partner. Share the invite link.`, true);
           else if (status === 'paired') setStatus('Partner connected — you are in sync.', true);
           else if (status === 'full') setStatus('This room is already full (2 viewers).', false);
+          else if (status === 'ended') {
+            setStatus('This room has ended. Taking you home…', false);
+            window.setTimeout(() => { window.location.href = basePath; }, 2000);
+          }
           else if (status === 'connecting') setStatus('Connecting…', false);
           else setStatus('Disconnected.', false);
         },
-        onChat(text, mine) {
+        onPresence(names) {
+          if (roomNames) roomNames.textContent = names.length ? `In this room: ${names.join(' + ')}` : '';
+        },
+        onChat(text, mine, name) {
           const p = document.createElement('p');
           if (mine) p.className = 'me';
-          p.textContent = (mine ? 'You: ' : 'Partner: ') + text;
+          p.textContent = `${name}: ${text}`;
           chatLog?.appendChild(p);
           if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
         },
@@ -146,9 +168,28 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
             if (sourceError) sourceError.textContent = 'Your partner loaded a local file — pick the same file with “Use a local file…” to watch your copy in sync.';
           }
         },
-      });
-
+      }, { displayName, isHost });
       client.connect();
+      };
+
+      // ——— display-name gate: reuse a remembered name, else ask first ———
+      const rememberedName =
+        sessionStorage.getItem('eigakan-display-name') || localStorage.getItem('eigakan-display-name');
+      if (rememberedName) {
+        startRoom(rememberedName);
+      } else if (nameGate && nameForm && nameInput) {
+        nameGate.style.display = 'block';
+        nameForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          const chosen = nameInput.value.replace(/\s+/g, ' ').trim().slice(0, 24) || 'Guest';
+          localStorage.setItem('eigakan-display-name', chosen);
+          sessionStorage.setItem('eigakan-display-name', chosen);
+          nameGate.style.display = 'none';
+          startRoom(chosen);
+        });
+      } else {
+        startRoom('Guest');
+      }
 
       // ——— source loading UI ———
       const sourceForm = document.getElementById('source-form') as HTMLFormElement;
@@ -161,7 +202,7 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
           return;
         }
         if (sourceError) sourceError.textContent = '';
-        client.loadSource(source);
+        client?.loadSource(source);
       });
 
       // ——— private-R2 HLS: mint a signed playlist URL, then load it for both ———
@@ -171,6 +212,7 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         e.preventDefault();
         try {
           if (sourceError) sourceError.textContent = '';
+          if (!client) throw new Error('Enter the room first — pick your display name above.');
           const url = await client.fetchHlsUrl(hlsPrefixInput.value);
           client.loadSource({ kind: 'hls', ref: url });
         } catch (err) {
@@ -185,7 +227,7 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         if (!file) return;
         facade.active = html5;
         showHtml5();
-        client.loadLocalFile(file, html5);
+        client?.loadLocalFile(file, html5);
       });
 
       // ——— invite + chat UI ———
@@ -199,11 +241,29 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         }
       });
 
+      const leaveBtn = document.getElementById('leave-room');
+      if (leaveBtn) {
+        leaveBtn.textContent = isHost ? 'End room' : 'Leave room';
+        leaveBtn.addEventListener('click', () => {
+          if (!client) { window.location.href = basePath; return; }
+          if (isHost) {
+            if (!window.confirm('End this room for both of you? The room code and invite link will stop working.')) return;
+            client.endRoom();
+            // The server answers with room-ended (handled in onStatus);
+            // navigate anyway as a belt-and-braces fallback.
+            window.setTimeout(() => { window.location.href = basePath; }, 1500);
+          } else {
+            client.close();
+            window.location.href = basePath;
+          }
+        });
+      }
+
       const chatForm = document.getElementById('chat-form') as HTMLFormElement;
       const chatInput = document.getElementById('chat-input') as HTMLInputElement;
       chatForm.addEventListener('submit', (e) => {
         e.preventDefault();
-        client.sendChat(chatInput.value);
+        client?.sendChat(chatInput.value);
         chatInput.value = '';
       });
     }

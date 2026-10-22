@@ -67,8 +67,9 @@ npm run verify   # typecheck (core, web, worker) + unit tests + production build
 
 Worker end-to-end smoke test (boots a real `wrangler dev` on port 8789 and
 drives it with two WebSocket viewers — relay, presence, room-full for a
-third viewer, seat freeing on leave, and the v0.3.0 room-session gate on
-the presign and HLS-mint routes; 21 checks):
+third viewer, seat freeing on leave, display names in presence/chat, the
+host's end-room termination, and the v0.3.0 room-session gate on the
+presign and HLS-mint routes; 26 checks):
 
 ```bash
 npm run test:e2e:worker

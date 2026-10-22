@@ -21,12 +21,12 @@ const { title = 'Eigakan — Watch Together, For Two', roomCode } = Astro.props;
   </head>
   <body>
     <header class="nav" id="top-nav">
-      <a class="wordmark" href={base}>EIGAKAN<small>WATCH TOGETHER</small></a>
+      <a class="wordmark" href={base}>EIGAKAN</a>
+      <div class="spacer"></div>
       <nav class="links">
         <a href={`${base}#sources`}>Sources</a>
         <a href={`${base}#how`}>How it works</a>
       </nav>
-      <div class="spacer"></div>
       {roomCode && <span class="room-chip">ROOM&nbsp;{roomCode}</span>}
     </header>
     <slot />

@@ -257,6 +257,9 @@ footer.site {
 .stage video, .stage iframe.player-frame {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000;
 }
+/* A video whose picture is smaller / differently shaped than the 16:9 stage
+   is centered inside it (balanced bars), never pinned to a corner. */
+.stage video { object-fit: contain; object-position: center; }
 .stage .badge {
   position: absolute; top: 0.9rem; left: 0.9rem; z-index: 5;
   font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em;
