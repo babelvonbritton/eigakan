@@ -44,8 +44,10 @@ npm run dev
 ```
 
 One command does it all: it builds sync-core, then runs the room worker
-(http://localhost:8787) and the web app (http://localhost:4321) side by side
-with labeled logs (`[worker]` / `[web]`). One Ctrl+C stops both.
+(http://localhost:8787), the web app (http://localhost:4321), and the local
+path proxy (http://localhost:8788) side by side with labeled logs. The proxy
+forwards to the local web app and room worker; one Ctrl+C stops all three.
+The web app itself remains available directly at http://localhost:4321.
 
 If you ever want the servers in separate terminals instead (each with its
 own logs, and Ctrl+C killing only that one):
@@ -126,17 +128,21 @@ live at `https://<your-domain>/eigakan` behind the path-proxy worker in
 The proxy strips the prefix and forwards to the Pages / worker origins
 (WebSocket upgrades pass through), so visitors see one origin:
 `/eigakan` for the site, `/eigakan-api` for the rooms. Routing and the
-gate below are covered by `npm run test:proxy` (18 checks).
+gate below are covered by `npm run test:proxy` (20 checks).
 
 **Optional shared-password gate:** set the `SITE_PASSWORD` secret on the
 proxy worker (dashboard → Settings → Variables and Secrets; the value
 never lives in the repo). The whole path then sits behind one shared
 password: a themed login page at `/eigakan-login`, a 30-day HttpOnly
 cookie (an HMAC keyed by the password, so rotating the password logs
-everyone out at once), and a hard 401 for API calls without the cookie.
+everyone out at once), a five-failure per-IP lockout lasting five minutes,
+and a hard 401 for API calls without the cookie. The lockout uses a Durable
+Object declared in `proxy/wrangler.toml`; deploy the proxy with Wrangler so
+its SQLite migration is applied.
 Leave the secret unset to run without the gate — e.g. local development.
 For local gate testing, put `SITE_PASSWORD=…` in `proxy/.dev.vars`
-(git-ignored) and run `wrangler dev --config proxy/wrangler.toml`.
+(git-ignored); `npm run dev` starts the proxy on http://localhost:8788 along
+with the web app and room worker.
 
 ## Private movie files via R2 (optional)
 

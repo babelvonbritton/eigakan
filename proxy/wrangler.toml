@@ -5,6 +5,14 @@ name = "eigakan-path-proxy"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+[[durable_objects.bindings]]
+name = "LOGIN_ATTEMPTS"
+class_name = "LoginAttempts"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LoginAttempts"]
+
 [vars]
 # The Pages project's own origin (where the proxy fetches the site from).
 PAGES_ORIGIN = "https://eigakan.pages.dev"

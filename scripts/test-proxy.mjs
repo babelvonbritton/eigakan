@@ -7,11 +7,32 @@
  * account or network.
  */
 import assert from 'node:assert/strict';
-import worker from '../proxy/src/index.js';
+import worker, { LoginAttempts } from '../proxy/src/index.js';
+
+const limiterStates = new Map();
+const namespace = {
+  idFromName: (name) => name,
+  get(id) {
+    let instance = limiterStates.get(id);
+    if (!instance) {
+      const data = new Map();
+      const storage = {
+        get: async (key) => data.get(key),
+        put: async (key, value) => data.set(key, value),
+        delete: async (key) => data.delete(key),
+        transaction: async (callback) => callback(storage),
+      };
+      instance = new LoginAttempts({ storage });
+      limiterStates.set(id, instance);
+    }
+    return { fetch: (input, init) => instance.fetch(new Request(input, init)) };
+  },
+};
 
 const env = {
   PAGES_ORIGIN: 'https://eigakan.pages.dev',
   ROOM_ORIGIN: 'https://eigakan-room.example.workers.dev',
+  LOGIN_ATTEMPTS: namespace,
 };
 
 let lastTarget = null;
@@ -107,6 +128,9 @@ await check('gate: login page is served', async () => {
   assert.equal(res.status, 200);
   const body = await res.text();
   assert.ok(body.includes('EIGAKAN') && body.includes('type="password"'));
+  assert.ok(body.includes('class="visibility-toggle"') && body.includes('password-visibility-slash'));
+  assert.ok(body.includes('.visibility-toggle.password-visible #password-visibility-slash { display: none; }'));
+  assert.ok(body.includes("classList.toggle('password-visible', showPassword)"));
 });
 
 await check('gate: wrong password gets no cookie', async () => {
@@ -150,4 +174,52 @@ await check('gate: API forwards with the cookie', async () => {
 await check('gate: a forged cookie is rejected', async () => {
   const res = await grun('/eigakan/', { headers: { Cookie: 'eigakan_gate=deadbeef' } });
   assert.equal(res.status, 302);
+});
+
+await check('gate: five failed passwords trigger a five-minute IP lockout', async () => {
+  const ip = '192.0.2.10';
+  for (let i = 0; i < 5; i++) {
+    const res = await grun('/eigakan-login', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': ip },
+      body: new URLSearchParams({ password: 'nope' }),
+    });
+    assert.equal(res.status, 200);
+  }
+  const blocked = await grun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ password: 'nope' }),
+  });
+  assert.equal(blocked.status, 429);
+  assert.equal(blocked.headers.get('retry-after'), '300');
+  const otherIp = await grun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': '192.0.2.12' },
+    body: new URLSearchParams({ password: 'correct horse battery' }),
+  });
+  assert.equal(otherIp.status, 302);
+});
+
+await check('gate: successful login clears that IP’s failure count', async () => {
+  const ip = '192.0.2.11';
+  for (let i = 0; i < 4; i++) {
+    await grun('/eigakan-login', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': ip },
+      body: new URLSearchParams({ password: 'nope' }),
+    });
+  }
+  const success = await grun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ password: 'correct horse battery' }),
+  });
+  assert.equal(success.status, 302);
+  const afterSuccess = await grun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ password: 'nope' }),
+  });
+  assert.equal(afterSuccess.status, 200);
 });
