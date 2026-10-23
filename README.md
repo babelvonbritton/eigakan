@@ -144,6 +144,16 @@ For local gate testing, put `SITE_PASSWORD=…` in `proxy/.dev.vars`
 (git-ignored); `npm run dev` starts the proxy on http://localhost:8788 along
 with the web app and room worker.
 
+## Mobile & installing as an app (PWA basics)
+
+The layout is responsive: under 720px the header compacts, panel and
+control buttons go full-width, spacing tightens, and notch safe-areas are
+respected; under 400px the header room chip steps aside. Eigakan ships a
+web app manifest and icons (`web/public/`), so on phones it can be
+**installed** (Add to Home Screen) and opens standalone, without browser
+chrome. There is deliberately no service worker: a sync theater is
+useless offline, and an SW would only risk serving stale builds.
+
 ## Private movie files via R2 (optional)
 
 1. Keep the bucket **private** — never enable public access.

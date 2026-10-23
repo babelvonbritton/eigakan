@@ -118,12 +118,17 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
       }
 
       const facade = new FacadePlayer();
-      const apiBase = (import.meta.env.PUBLIC_ROOM_API_URL as string) || 'http://localhost:8787';
+      const configuredApiBase = (import.meta.env.PUBLIC_ROOM_API_URL as string | undefined)?.replace(/\/+$/, '');
+      const apiBase = configuredApiBase || (import.meta.env.DEV ? 'http://localhost:8787' : '');
       const rawBase = import.meta.env.BASE_URL as string;
       const basePath = rawBase.endsWith('/') ? rawBase : `${rawBase}/`;
 
       let client: RoomClient | undefined;
       const startRoom = (displayName: string) => {
+      if (!apiBase) {
+        setStatus('Room server is not configured. Set PUBLIC_ROOM_API_URL for this deployment and rebuild the site.', false);
+        return;
+      }
       client = new RoomClient(apiBase, code, facade, {
         onStatus(status) {
           if (status === 'waiting') setStatus(`Room ${code} — waiting for your partner. Share the invite link.`, true);
@@ -135,6 +140,9 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
           }
           else if (status === 'connecting') setStatus('Connecting…', false);
           else setStatus('Disconnected.', false);
+        },
+        onError(message) {
+          setStatus(message, false);
         },
         onPresence(names) {
           if (roomNames) roomNames.textContent = names.length ? `In this room: ${names.join(' + ')}` : '';

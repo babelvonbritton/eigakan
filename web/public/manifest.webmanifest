@@ -1,0 +1,16 @@
+{
+  "name": "Eigakan — Watch Together, For Two",
+  "short_name": "Eigakan",
+  "description": "A two-person watch-together theater: sync a YouTube video, MP4, HLS stream or local file between exactly two viewers.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050403",
+  "theme_color": "#050403",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -297,6 +297,13 @@ export default {
       return forward(request, env.PAGES_ORIGIN, SITE_PREFIX);
     }
 
+    // Astro's dev server emits root-relative Vite and HMR asset URLs even
+    // when the page itself is opened through /eigakan. Forward those only
+    // in local development; deployed proxy routes must remain prefix-only.
+    if (env.LOCAL_DEV === 'true') {
+      return forward(request, env.PAGES_ORIGIN, '');
+    }
+
     // The routes should prevent anything else reaching this Worker; if a
     // broader route is ever configured, refuse rather than swallow traffic
     // meant for the main site.

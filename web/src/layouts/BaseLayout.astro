@@ -9,6 +9,9 @@ interface Props {
 }
 
 const { title = 'Eigakan — Watch Together, For Two', roomCode } = Astro.props;
+// Base-aware asset prefix for the PWA + icon links (BASE_URL has no trailing
+// slash when a base is set).
+const assetBase = base.endsWith('/') ? base : `${base}/`;
 ---
 
 <!doctype html>
@@ -17,6 +20,14 @@ const { title = 'Eigakan — Watch Together, For Two', roomCode } = Astro.props;
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Eigakan syncs a YouTube video, an MP4 or a local file between exactly two viewers — play, pause and seek together, in real time." />
+    <meta name="theme-color" content="#050403" />
+    <link rel="icon" type="image/svg+xml" href={`${assetBase}favicon.svg`} />
+    <link rel="apple-touch-icon" href={`${assetBase}icons/apple-touch-icon.png`} />
+    <link rel="manifest" href={`${assetBase}manifest.webmanifest`} />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Eigakan" />
     <title>{title}</title>
   </head>
   <body>

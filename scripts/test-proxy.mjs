@@ -95,6 +95,20 @@ try {
     assert.equal(res.status, 404);
   });
 
+  await check('local dev Vite assets forward to the Astro server', async () => {
+    const localDevEnv = {
+      ...env,
+      PAGES_ORIGIN: 'http://localhost:4321',
+      LOCAL_DEV: 'true',
+    };
+    const res = await worker.fetch(
+      new Request('http://localhost:8788/src/pages/index.astro'),
+      localDevEnv,
+    );
+    assert.equal(res.status, 200);
+    assert.equal(lastTarget, 'http://localhost:4321/src/pages/index.astro');
+  });
+
   await check('POST body is preserved when forwarding', async () => {
     let seenBody = null;
     globalThis.fetch = async (req) => { seenBody = await req.text(); return new Response('ok'); };
@@ -106,7 +120,7 @@ try {
   globalThis.fetch = realFetch;
 }
 
-console.log(`\n${passed}/10 path-proxy checks passed`);
+console.log(`\n${passed}/11 path-proxy checks passed`);
 
 // ——— shared-password gate (env.SITE_PASSWORD set) ———
 // (the main suite restored the real fetch in its finally block; stub again)

@@ -21,7 +21,7 @@
     "test:proxy": "node scripts/test-proxy.mjs"
   },
   "type": "module",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "workspaces": [
     "web",
     "worker",

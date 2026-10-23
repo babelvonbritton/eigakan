@@ -20,6 +20,7 @@ export type RoomStatus =
 
 export interface RoomClientCallbacks {
   onStatus(status: RoomStatus, peers: number): void;
+  onError(message: string): void;
   /** Display names of everyone currently in the room, in join order. */
   onPresence(names: string[]): void;
   /** `name` is the sender's display name (own name for own messages). */
@@ -58,6 +59,8 @@ export class RoomClient {
   private currentSource: VideoSource | null = null;
   /** Room-session token from `welcome`; gates the R2 presign route. Dies with the socket. */
   private sessionToken: string | null = null;
+  private connectionErrorReported = false;
+  private terminalStatusReceived = false;
   /** This viewer stalled and asked the room to wait (pause-both rule). */
   private localBufferingHold = false;
   /** The partner stalled; we paused for them and resume on their buffer-resume. */
@@ -75,7 +78,13 @@ export class RoomClient {
     const wsBase = this.apiBase.replace(/^http/, 'ws');
     const query = new URLSearchParams({ name: this.options.displayName });
     if (this.options.isHost) query.set('host', '1');
-    this.ws = new WebSocket(`${wsBase}/rooms/${this.roomCode}/ws?${query.toString()}`);
+    try {
+      this.ws = new WebSocket(`${wsBase}/rooms/${this.roomCode}/ws?${query.toString()}`);
+    } catch {
+      this.connectionErrorReported = true;
+      this.callbacks.onError('Could not connect to the room server. Check the room server URL and try again.');
+      return;
+    }
 
     this.ws.addEventListener('message', (event) => {
       let message: ServerMessage;
@@ -87,10 +96,17 @@ export class RoomClient {
       this.handleServerMessage(message);
     });
 
+    this.ws.addEventListener('error', () => {
+      this.connectionErrorReported = true;
+      this.callbacks.onError('Could not connect to the room server. Check your connection and room server URL.');
+    });
+
     this.ws.addEventListener('close', () => {
       this.stopHeartbeat();
       this.sessionToken = null;
-      this.callbacks.onStatus('closed', 0);
+      if (!this.connectionErrorReported && !this.terminalStatusReceived) {
+        this.callbacks.onStatus('closed', 0);
+      }
     });
 
     this.player.onLocalControl((action) => this.handleLocalControl(action));
@@ -209,12 +225,18 @@ export class RoomClient {
         break;
       }
       case 'room-ended':
+        this.terminalStatusReceived = true;
         this.stopHeartbeat();
         this.sessionToken = null;
         this.callbacks.onStatus('ended', 0);
         break;
       case 'room-full':
+        this.terminalStatusReceived = true;
         this.callbacks.onStatus('full', 2);
+        break;
+      case 'error':
+        this.terminalStatusReceived = true;
+        this.callbacks.onError(message.message);
         break;
       case 'peer-event':
         void this.applyRemoteEvent(message.event);

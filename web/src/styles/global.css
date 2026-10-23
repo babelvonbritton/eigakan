@@ -285,3 +285,38 @@ input[type='file'].hidden { display: none; }
 .chat-log .me { color: var(--gold-200); }
 
 .icon { vertical-align: -2px; flex: none; }
+
+/* ——— Small screens (phones, narrow windows) ——— */
+@media (max-width: 720px) {
+  .nav {
+    gap: 1rem;
+    padding: 0.7rem 4vw;
+    padding-top: calc(0.7rem + env(safe-area-inset-top));
+  }
+  .wordmark { font-size: 1.5rem; }
+  .nav .links { gap: 0.85rem; font-size: 0.84rem; }
+  .nav .room-chip { font-size: 0.72rem; padding: 0.26rem 0.6rem; }
+
+  .hero { min-height: 88svh; padding: 6rem 5vw 3.5rem; }
+  .hero p.lede { font-size: 1.02rem; }
+  .panel { padding: 1.05rem; }
+  .panel .btn { flex: 1 1 100%; justify-content: center; }
+  .row .field { flex-basis: 100%; }
+
+  .theater {
+    padding: 4.9rem 3.5vw 1.5rem;
+    padding-top: calc(4.9rem + env(safe-area-inset-top));
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  }
+  .controls-bar .btn { flex: 1 1 auto; justify-content: center; }
+  .status-text { flex-wrap: wrap; }
+  .chat-panel .btn { flex: 1 1 auto; justify-content: center; }
+  .chat-log { max-height: 140px; }
+  .tiles { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 400px) {
+  .nav .links a { letter-spacing: 0; }
+  .nav .room-chip { display: none; } /* the code stays visible in the room UI */
+  .hero h1 { font-size: 2.5rem; }
+}
