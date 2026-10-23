@@ -151,17 +151,68 @@ control buttons go full-width, spacing tightens, and notch safe-areas are
 respected; under 400px the header room chip steps aside. Eigakan ships a
 web app manifest and icons (`web/public/`), so on phones it can be
 **installed** (Add to Home Screen) and opens standalone, without browser
-chrome. There is deliberately no service worker: a sync theater is
-useless offline, and an SW would only risk serving stale builds.
+chrome. The service worker is deliberately **network-only** — it caches
+nothing and never answers a request itself (a sync theater is useless
+offline, and a caching SW would risk serving stale builds); it exists so
+browsers offer installation. The path proxy serves the manifest, icons
+and `sw.js` without the password gate (browsers fetch them outside the
+page session) — pages and the API stay gated.
 
 ## Private movie files via R2 (optional)
 
 1. Keep the bucket **private** — never enable public access.
-2. Create an R2 API token scoped to that single bucket (Object Read).
+2. Create an R2 API token scoped to that single bucket (**Object Read &
+   Write** — Write is what the in-site uploader's multipart sessions use).
 3. Set worker secrets: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
    `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (`wrangler secret put …`).
-4. The worker route `GET /rooms/:code/files/:key/presign` then returns a
+4. Add this **CORS policy** to the bucket (bucket → Settings → CORS
+   Policy) so browsers may PUT upload parts directly to R2 and read back
+   each part's `ETag`. Replace the origin with the site's public origin:
+
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://YOUR-DOMAIN"],
+       "AllowedMethods": ["PUT"],
+       "AllowedHeaders": ["*"],
+       "ExposeHeaders": ["ETag"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+
+5. The worker route `GET /rooms/:code/files/:key/presign` then returns a
    signed URL valid for 4 hours.
+
+### Uploading a movie from inside the site
+
+In a room, **“Upload a movie to the room…”** sends the file from the
+browser straight to R2 — the worker only brokers an S3 multipart session
+(`POST /rooms/:code/uploads/*`, gated by the same room-session token as
+presign; object keys are namespaced `uploads/<room-code>/…`).
+Files upload in 32 MiB parts (3 parallel, retried individually), with a
+progress bar and cancel; when the upload completes it loads for both
+viewers, and each viewer resolves **their own** presigned URL for the
+key, so no signed URL is ever relayed. Browser-playable files only
+(.mp4 / .m4v / .webm), up to 5 GiB. Housekeeping: add a bucket lifecycle
+rule that deletes `uploads/` objects after a few days so the free
+storage tier is never quietly eaten by forgotten movies.
+
+### Reusing an uploaded movie in a later room
+
+Ending a room does **not** delete a completed upload. The Source panel's
+**Uploaded movies** library lists completed uploads across all room
+namespaces (newest first, up to 100), with the original filename stored
+as object metadata when the upload began, its size, and its completion
+time. In any later room, **Play for both** reuses the object directly —
+no second upload — while each viewer still resolves their own presigned
+URL from inside that new room. **Delete** removes the object permanently.
+
+Until it is manually deleted, retention is controlled only by the bucket
+lifecycle rule (for example, expire `uploads/` after seven days). The
+library intentionally spans rooms: any live member of any room on this
+private two-person site can list, play, or delete its movies. Incomplete
+multipart uploads never appear in the list.
 
 The presign route is **gated by a room session** (since v0.3.0): when a
 viewer joins a room, the Room object issues a random session token in its

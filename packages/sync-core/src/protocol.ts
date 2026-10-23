@@ -6,11 +6,16 @@
  * remote MP4, and a local file all share this exact protocol.
  */
 
-export type SourceKind = 'youtube' | 'mp4' | 'hls' | 'local-file';
+export type SourceKind = 'youtube' | 'mp4' | 'hls' | 'local-file' | 'r2-file';
 
 export interface VideoSource {
   kind: SourceKind;
-  /** YouTube video id (kind=youtube) or an https URL (kind=mp4). Local files never leave the device, so they carry no URL. */
+  /**
+   * YouTube video id (kind=youtube), an https URL (kind=mp4/hls), or an R2
+   * object key (kind=r2-file — each viewer resolves their own presigned URL
+   * for it, so no credential ever travels in the load event). Local files
+   * never leave the device, so they carry no URL.
+   */
   ref: string;
   title?: string;
 }

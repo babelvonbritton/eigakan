@@ -291,7 +291,20 @@ export default {
       return forward(request, env.ROOM_ORIGIN, API_PREFIX);
     }
     if (url.pathname.startsWith(SITE_PREFIX + '/')) {
-      if (gateOn && !(await isGatedIn(request, password))) {
+      // PWA plumbing is public on purpose: browsers fetch the manifest,
+      // icons and service worker outside the page's session (and install
+      // checks happen before any login round-trip), so gating them makes
+      // the site un-installable. These files reveal nothing — they are
+      // the same assets the public Pages origin serves anyway. Pages and
+      // the API stay gated.
+      const rest = url.pathname.slice(SITE_PREFIX.length + 1);
+      const isPwaPlumbing =
+        request.method === 'GET' &&
+        (rest === 'manifest.webmanifest' ||
+          rest === 'favicon.svg' ||
+          rest === 'sw.js' ||
+          rest.startsWith('icons/'));
+      if (!isPwaPlumbing && gateOn && !(await isGatedIn(request, password))) {
         return Response.redirect(new URL(LOGIN_PATH, url).toString(), 302);
       }
       return forward(request, env.PAGES_ORIGIN, SITE_PREFIX);

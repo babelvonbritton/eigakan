@@ -21,12 +21,23 @@ export type RoomStatus =
 export interface RoomClientCallbacks {
   onStatus(status: RoomStatus, peers: number): void;
   onError(message: string): void;
+  /** The welcome message has supplied the room-session token; gated R2 calls may start. */
+  onSessionReady?: () => void;
   /** Display names of everyone currently in the room, in join order. */
   onPresence(names: string[]): void;
   /** `name` is the sender's display name (own name for own messages). */
   onChat(text: string, mine: boolean, name: string): void;
   onPartnerBuffering(buffering: boolean): void;
   onSourceLoaded(source: VideoSource): void;
+}
+
+/** One completed in-site upload, reusable from later rooms until R2 lifecycle expiry or manual deletion. */
+export interface UploadedMovie {
+  key: string;
+  title: string;
+  size: number;
+  uploadedAt: string;
+  sourceRoom: string;
 }
 
 export interface RoomClientOptions {
@@ -125,8 +136,32 @@ export class RoomClient {
       playbackRate: 1,
       playing: false,
     });
-    void this.player.load(source);
+    void (async () => {
+      const resolved = await this.resolveForPlayer(source);
+      if (resolved) await this.player.load(resolved);
+    })();
     this.callbacks.onSourceLoaded(source);
+  }
+
+  /**
+   * An r2-file source carries only the object key; each viewer turns it
+   * into their own presigned URL (their own room-session token), so no
+   * signed URL — a bearer credential — is ever relayed through the room.
+   * Every other kind passes through unchanged.
+   */
+  private async resolveForPlayer(source: VideoSource): Promise<VideoSource | null> {
+    if (source.kind !== 'r2-file') return source;
+    try {
+      const url = await this.fetchPresignedUrl(source.ref);
+      return { kind: 'mp4', ref: url, title: source.title };
+    } catch (error) {
+      this.callbacks.onError(
+        `Could not get a viewing link for "${source.title ?? 'the uploaded movie'}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   /** Local files: the *file* stays on this device; only the load event (name only) is shared. */
@@ -165,6 +200,39 @@ export class RoomClient {
   }
 
   /**
+   * List completed in-site uploads across all previous rooms. The current
+   * room session only proves this viewer belongs inside Eigakan now; the
+   * library itself is deliberately reusable until a movie expires from R2
+   * or is deleted from this list.
+   */
+  async listUploadedMovies(): Promise<UploadedMovie[]> {
+    if (!this.sessionToken) throw new Error('Not joined to the room yet — no session token.');
+    const res = await fetch(`${this.apiBase}/rooms/${this.roomCode}/library`, {
+      headers: { 'X-Room-Session': this.sessionToken },
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? `Could not load the uploads library (${res.status})`);
+    }
+    const body = (await res.json()) as { movies?: UploadedMovie[] };
+    return Array.isArray(body.movies) ? body.movies : [];
+  }
+
+  /** Permanently remove one uploaded movie from R2 and therefore from every room's library. */
+  async deleteUploadedMovie(key: string): Promise<void> {
+    if (!this.sessionToken) throw new Error('Not joined to the room yet — no session token.');
+    const res = await fetch(`${this.apiBase}/rooms/${this.roomCode}/library/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Room-Session': this.sessionToken },
+      body: JSON.stringify({ key }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? `Could not delete that movie (${res.status})`);
+    }
+  }
+
+  /**
    * Ask the worker to mint a signed HLS viewing URL for an R2 prefix
    * (e.g. "movie-hls" for the ladder uploaded by scripts/encode-hls.sh).
    * The returned URL points at the worker itself: it serves rewritten
@@ -186,6 +254,93 @@ export class RoomClient {
     }
     const body = (await res.json()) as { url: string };
     return body.url;
+  }
+
+  private async uploadCall<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+    if (!this.sessionToken) throw new Error('Not joined to the room yet — no session token.');
+    const res = await fetch(`${this.apiBase}/rooms/${this.roomCode}/uploads/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Room-Session': this.sessionToken },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? `Upload request failed (${res.status})`);
+    }
+    return (await res.json()) as T;
+  }
+
+  /**
+   * Upload a movie file straight from this browser to the private R2
+   * bucket (the bytes never pass through the worker): the worker brokers
+   * an S3 multipart session, this method PUTs 32 MiB parts to presigned
+   * URLs (3 in parallel, each retried), then completes the upload.
+   * Resolves with the object key; load it for both with loadSource({
+   * kind: 'r2-file', ref: key }).
+   */
+  async uploadMovie(
+    file: File,
+    onProgress: (fraction: number) => void,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const PART_SIZE = 32 * 1024 * 1024;
+    const CONCURRENCY = 3;
+    const { key, uploadId } = await this.uploadCall<{ key: string; uploadId: string }>('create', {
+      filename: file.name,
+      size: file.size,
+    });
+    try {
+      const partCount = Math.max(1, Math.ceil(file.size / PART_SIZE));
+      const etags: { partNumber: number; etag: string }[] = [];
+      let nextPart = 1;
+      let doneBytes = 0;
+      const runWorker = async (): Promise<void> => {
+        while (nextPart <= partCount) {
+          if (signal.aborted) throw new DOMException('Upload cancelled.', 'AbortError');
+          const partNumber = nextPart++;
+          const blob = file.slice((partNumber - 1) * PART_SIZE, Math.min(file.size, partNumber * PART_SIZE));
+          const etag = await this.uploadPartWithRetry(key, uploadId, partNumber, blob, signal);
+          etags.push({ partNumber, etag });
+          doneBytes += blob.size;
+          onProgress(doneBytes / file.size);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, partCount) }, runWorker));
+      if (signal.aborted) throw new DOMException('Upload cancelled.', 'AbortError');
+      await this.uploadCall('complete', { key, uploadId, parts: etags });
+      return key;
+    } catch (error) {
+      // Best effort: an abandoned multipart session would otherwise keep
+      // its uploaded parts in the bucket until a lifecycle rule sweeps.
+      await this.uploadCall('abort', { key, uploadId }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async uploadPartWithRetry(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    blob: Blob,
+    signal: AbortSignal,
+  ): Promise<string> {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const { url } = await this.uploadCall<{ url: string }>('sign-part', { key, uploadId, partNumber });
+        const res = await fetch(url, { method: 'PUT', body: blob, signal });
+        if (!res.ok) throw new Error(`Part ${partNumber} was refused (${res.status}).`);
+        const etag = res.headers.get('ETag');
+        if (!etag) {
+          throw new Error('R2 did not expose an ETag for the uploaded part — the bucket CORS policy must list ETag in ExposeHeaders (see the Step 4 setup).');
+        }
+        return etag;
+      } catch (error) {
+        if (signal.aborted) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`Part ${partNumber} failed to upload.`);
   }
 
   sendChat(text: string): void {
@@ -216,6 +371,7 @@ export class RoomClient {
     switch (message.type) {
       case 'welcome':
         this.sessionToken = message.sessionToken;
+        this.callbacks.onSessionReady?.();
       // fallthrough — welcome also carries the peer count
       case 'presence': {
         const peers = message.peers;
@@ -257,7 +413,8 @@ export class RoomClient {
     if (event.kind === 'load' && event.source) {
       this.currentSource = event.source;
       if (event.source.kind !== 'local-file') {
-        await this.player.load(event.source);
+        const resolved = await this.resolveForPlayer(event.source);
+        if (resolved) await this.player.load(resolved);
       }
       this.callbacks.onSourceLoaded(event.source);
       return;

@@ -184,6 +184,8 @@ interface YTNamespace {
     elementId: string,
     options: {
       videoId?: string;
+      width?: string | number;
+      height?: string | number;
       playerVars?: Record<string, string | number>;
       events?: {
         onReady?: () => void;
@@ -231,6 +233,11 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
     this.ready = (async () => {
       const YT = await loadYouTubeApi();
       this.player = new YT.Player(this.elementId, {
+        // Without explicit dimensions the API builds a fixed 640x360 iframe
+        // that bursts out of the stage on phones; 100% defers to the stage
+        // (and the .stage iframe CSS rule is the backstop).
+        width: '100%',
+        height: '100%',
         playerVars: { rel: 0, playsinline: 1 },
         events: {
           onStateChange: (event) => {

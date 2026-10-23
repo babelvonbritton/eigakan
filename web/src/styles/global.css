@@ -257,6 +257,12 @@ footer.site {
 .stage video, .stage iframe.player-frame {
   position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000;
 }
+/* The YouTube API replaces our mount element with its own iframe (no
+   player-frame class, intrinsic 640x360 size). Any iframe inside the stage
+   is stage-sized, whatever attributes it arrived with. */
+.stage iframe {
+  position: absolute; inset: 0; width: 100% !important; height: 100% !important; border: 0; background: #000;
+}
 /* A video whose picture is smaller / differently shaped than the 16:9 stage
    is centered inside it (balanced bars), never pinned to a corner. */
 .stage video { object-fit: contain; object-position: center; }
@@ -286,6 +292,23 @@ input[type='file'].hidden { display: none; }
 
 .icon { vertical-align: -2px; flex: none; }
 
+/* ——— Reusable uploaded-movie library ——— */
+.library { margin-top: 1.1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.library-head { align-items: center; justify-content: space-between; }
+.library-head h3 { margin: 0; font-size: 1rem; }
+.library-head .btn, .library-actions .btn { padding: 0.55rem 0.9rem; font-size: 0.9rem; }
+.library-list { display: grid; gap: 0.6rem; margin-top: 0.75rem; }
+.library-item {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.75rem; border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.library-info { flex: 1 1 auto; min-width: 0; }
+.library-title { font-weight: 700; overflow-wrap: anywhere; }
+.library-meta { color: var(--text-faint); font-size: 0.84rem; margin-top: 0.2rem; }
+.library-actions { display: flex; gap: 0.45rem; flex-wrap: wrap; }
+.library-delete { color: #ffb59d; }
+
 /* ——— Small screens (phones, narrow windows) ——— */
 @media (max-width: 720px) {
   .nav {
@@ -309,6 +332,9 @@ input[type='file'].hidden { display: none; }
     padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
   }
   .controls-bar .btn { flex: 1 1 auto; justify-content: center; }
+  .library-item { align-items: stretch; flex-direction: column; }
+  .library-actions { width: 100%; }
+  .library-actions .btn { flex: 1 1 0; justify-content: center; }
   .status-text { flex-wrap: wrap; }
   .chat-panel .btn { flex: 1 1 auto; justify-content: center; }
   .chat-log { max-height: 140px; }

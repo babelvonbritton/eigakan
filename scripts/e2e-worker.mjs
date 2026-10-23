@@ -85,19 +85,26 @@ class Client {
 }
 
 // ---------- boot wrangler dev ----------
-const child = spawn(
-  'npx',
-  ['wrangler', 'dev', '--config', 'worker/wrangler.toml', '--port', String(PORT), '--ip', '127.0.0.1'],
-  { cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'] },
-);
 let serverLog = '';
-child.stdout.on('data', (d) => { serverLog = (serverLog + d).slice(-4000); });
-child.stderr.on('data', (d) => { serverLog = (serverLog + d).slice(-4000); });
+let child = null;
+function boot(extraArgs = []) {
+  serverLog = '';
+  child = spawn(
+    'npx',
+    ['wrangler', 'dev', '--config', 'worker/wrangler.toml', '--port', String(PORT), '--ip', '127.0.0.1', ...extraArgs],
+    { cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  child.stdout.on('data', (d) => { serverLog = (serverLog + d).slice(-4000); });
+  child.stderr.on('data', (d) => { serverLog = (serverLog + d).slice(-4000); });
+}
+boot();
 
 async function stopServer() {
+  if (!child) return;
   try { process.kill(-child.pid, 'SIGTERM'); } catch { /* already dead */ }
   await sleep(800);
   try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already dead */ }
+  child = null;
 }
 
 async function waitForHealth(timeoutMs = 90000) {
@@ -237,6 +244,182 @@ try {
   const deadline = Date.now() + 4000;
   while (Date.now() < deadline && !(a.closedFlag && d.closedFlag)) await sleep(100);
   check('server closes every socket on end-room', a.closedFlag && d.closedFlag);
+
+  // ——— v0.9.0 in-site uploads: reboot with fake R2 config + a stub S3 ———
+  for (const cl of clients) cl.close();
+  await stopServer();
+  const { createServer } = await import('node:http');
+  const stubObjects = new Map();
+  const stubTitles = new Map();
+  const stubEscapeXml = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const stubS3 = createServer((req, res) => {
+    const u = new URL(req.url, 'http://stub');
+    const keyFromPath = decodeURIComponent(u.pathname.replace(/^\/eigakan-movies\//, ''));
+    if (req.method === 'POST' && u.searchParams.has('uploads')) {
+      stubTitles.set(keyFromPath, req.headers['x-amz-meta-title'] ?? '');
+      res.writeHead(200, { 'Content-Type': 'application/xml' });
+      res.end('<InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><UploadId>STUB-UPLOAD-ID</UploadId></InitiateMultipartUploadResult>');
+    } else if (req.method === 'POST' && u.searchParams.has('uploadId')) {
+      stubObjects.set(keyFromPath, { size: 40 * 1024 * 1024, lastModified: new Date().toISOString() });
+      res.writeHead(200, { 'Content-Type': 'application/xml' });
+      res.end('<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></CompleteMultipartUploadResult>');
+    } else if (req.method === 'HEAD') {
+      const object = stubObjects.get(keyFromPath);
+      if (!object) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, {
+        'Content-Length': String(object.size),
+        'x-amz-meta-title': stubTitles.get(keyFromPath) ?? '',
+      });
+      res.end();
+    } else if (req.method === 'GET' && u.pathname === '/eigakan-movies' && u.searchParams.get('list-type') === '2') {
+      const contents = [...stubObjects.entries()].map(([key, object]) =>
+        `<Contents><Key>${stubEscapeXml(key)}</Key><LastModified>${object.lastModified}</LastModified><ETag>"stub"</ETag><Size>${object.size}</Size><StorageClass>STANDARD</StorageClass></Contents>`,
+      ).join('');
+      res.writeHead(200, { 'Content-Type': 'application/xml' });
+      res.end(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>eigakan-movies</Name><Prefix>uploads/</Prefix><KeyCount>${stubObjects.size}</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`);
+    } else if (req.method === 'DELETE') {
+      if (!u.searchParams.has('uploadId')) {
+        stubObjects.delete(keyFromPath);
+        stubTitles.delete(keyFromPath);
+      }
+      res.writeHead(204); res.end();
+    } else {
+      res.writeHead(200); res.end();
+    }
+  });
+  await new Promise((r) => stubS3.listen(0, '127.0.0.1', r));
+  const stubPort = stubS3.address().port;
+  boot([
+    '--var', 'R2_ACCOUNT_ID:test-account',
+    '--var', 'R2_ACCESS_KEY_ID:test-key-id',
+    '--var', 'R2_SECRET_ACCESS_KEY:test-secret',
+    '--var', 'R2_BUCKET:eigakan-movies',
+    '--var', `R2_ENDPOINT:http://127.0.0.1:${stubPort}`,
+  ]);
+  await waitForHealth();
+  check('phase 2: worker rebooted with (stub) R2 configured', true);
+
+  const u = new Client('U'); clients.push(u);
+  await u.connect(CODE, '?name=Uploader&host=1');
+  const welcomeU = await u.waitFor((m) => m.type === 'welcome', 'welcome U');
+  const uToken = welcomeU.sessionToken;
+  const up = (path, init = {}) =>
+    fetch(`${BASE}/rooms/${CODE}/uploads/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+      body: init.body ? JSON.stringify(init.body) : undefined,
+    });
+
+  const upAnon = await up('create', { body: { filename: 'movie.mp4', size: 1024 } });
+  check('uploads: anonymous create -> 401', upAnon.status === 401, `got ${upAnon.status}`);
+  const upWrong = await up('create', {
+    headers: { 'X-Room-Session': 'f'.repeat(64) },
+    body: { filename: 'movie.mp4', size: 1024 },
+  });
+  check('uploads: wrong token create -> 403', upWrong.status === 403, `got ${upWrong.status}`);
+
+  const auth = { headers: { 'X-Room-Session': uToken } };
+  const badExt = await up('create', { ...auth, body: { filename: 'movie.mkv', size: 1024 } });
+  check('uploads: non-playable extension -> 415', badExt.status === 415, `got ${badExt.status}`);
+
+  const created = await up('create', { ...auth, body: { filename: 'My Movie (2026).mp4', size: 40 * 1024 * 1024 } });
+  const createdBody = await created.json().catch(() => ({}));
+  check(
+    'uploads: create returns a room-namespaced key + uploadId',
+    created.status === 200 && createdBody.uploadId === 'STUB-UPLOAD-ID' &&
+      typeof createdBody.key === 'string' && createdBody.key.startsWith(`uploads/${CODE}/`) && createdBody.key.endsWith('.mp4'),
+    JSON.stringify(createdBody),
+  );
+
+  const signed = await up('sign-part', { ...auth, body: { key: createdBody.key, uploadId: createdBody.uploadId, partNumber: 1 } });
+  const signedBody = await signed.json().catch(() => ({}));
+  const signedUrl = new URL(signedBody.url ?? 'http://invalid');
+  check(
+    'uploads: sign-part returns a presigned PUT for the stub endpoint',
+    signed.status === 200 && signedUrl.searchParams.get('partNumber') === '1' &&
+      signedUrl.searchParams.get('uploadId') === 'STUB-UPLOAD-ID' &&
+      signedUrl.searchParams.has('X-Amz-Signature'),
+    signedBody.url ?? `status ${signed.status}`,
+  );
+
+  const wrongRoom = await up('complete', { ...auth, body: { key: 'uploads/ZZZZZZ/x.mp4', uploadId: 'STUB-UPLOAD-ID', parts: [{ partNumber: 1, etag: '"abc"' }] } });
+  check('uploads: complete for another room’s key -> 404', wrongRoom.status === 404, `got ${wrongRoom.status}`);
+
+  const completed = await up('complete', {
+    ...auth,
+    body: { key: createdBody.key, uploadId: createdBody.uploadId, parts: [{ partNumber: 1, etag: '"abc"' }, { partNumber: 2, etag: '"def"' }] },
+  });
+  check('uploads: complete succeeds against the stub', completed.status === 200, `got ${completed.status}`);
+
+  const aborted = await up('abort', { ...auth, body: { key: createdBody.key, uploadId: createdBody.uploadId } });
+  check('uploads: abort succeeds', aborted.status === 200, `got ${aborted.status}`);
+
+  const presignNow = await fetch(`${BASE}/rooms/${CODE}/files/${encodeURIComponent(createdBody.key)}/presign`, auth);
+  const presignBody = await presignNow.json().catch(() => ({}));
+  check(
+    'uploads: uploaded key presigns for playback (stub endpoint in URL)',
+    presignNow.status === 200 && typeof presignBody.url === 'string' && presignBody.url.includes(`127.0.0.1:${stubPort}`),
+    `got ${presignNow.status}`,
+  );
+  const libraryAnon = await fetch(`${BASE}/rooms/${CODE}/library`);
+  check('library: anonymous list -> 401', libraryAnon.status === 401, `got ${libraryAnon.status}`);
+  const libraryWrong = await fetch(`${BASE}/rooms/${CODE}/library`, {
+    headers: { 'X-Room-Session': 'f'.repeat(64) },
+  });
+  check('library: wrong token list -> 403', libraryWrong.status === 403, `got ${libraryWrong.status}`);
+
+  const library = await fetch(`${BASE}/rooms/${CODE}/library`, auth);
+  const libraryBody = await library.json().catch(() => ({}));
+  const libraryMovie = libraryBody.movies?.find((movie) => movie.key === createdBody.key);
+  check(
+    'library: completed upload is listed with its original title and size',
+    library.status === 200 && libraryMovie?.title === 'My Movie (2026).mp4' &&
+      libraryMovie?.size === 40 * 1024 * 1024 && libraryMovie?.sourceRoom === CODE,
+    JSON.stringify(libraryMovie ?? libraryBody),
+  );
+
+  // The point of the library: a *different* room can discover and play the
+  // same completed upload without the file being uploaded again.
+  const OTHER_CODE = CODE === 'ZZZZZZ' ? 'YYYYYY' : 'ZZZZZZ';
+  const v = new Client('V'); clients.push(v);
+  await v.connect(OTHER_CODE, '?name=NextNight&host=1');
+  const welcomeV = await v.waitFor((m) => m.type === 'welcome', 'welcome V');
+  const vAuth = { headers: { 'X-Room-Session': welcomeV.sessionToken } };
+  const libraryFromNewRoom = await fetch(`${BASE}/rooms/${OTHER_CODE}/library`, vAuth);
+  const libraryFromNewRoomBody = await libraryFromNewRoom.json().catch(() => ({}));
+  check(
+    'library: a new room can discover the previous room’s upload',
+    libraryFromNewRoom.status === 200 && libraryFromNewRoomBody.movies?.some((movie) => movie.key === createdBody.key),
+    `got ${libraryFromNewRoom.status}`,
+  );
+  const presignFromNewRoom = await fetch(
+    `${BASE}/rooms/${OTHER_CODE}/files/${encodeURIComponent(createdBody.key)}/presign`,
+    vAuth,
+  );
+  check('library: a new room can presign the reused movie', presignFromNewRoom.status === 200, `got ${presignFromNewRoom.status}`);
+
+  const invalidDelete = await fetch(`${BASE}/rooms/${OTHER_CODE}/library/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...vAuth.headers },
+    body: JSON.stringify({ key: 'movie.mp4' }),
+  });
+  check('library: deleting a non-library key -> 400', invalidDelete.status === 400, `got ${invalidDelete.status}`);
+
+  const deleted = await fetch(`${BASE}/rooms/${OTHER_CODE}/library/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...vAuth.headers },
+    body: JSON.stringify({ key: createdBody.key }),
+  });
+  check('library: manual delete succeeds', deleted.status === 200, `got ${deleted.status}`);
+  const libraryAfterDelete = await fetch(`${BASE}/rooms/${OTHER_CODE}/library`, vAuth);
+  const libraryAfterDeleteBody = await libraryAfterDelete.json().catch(() => ({}));
+  check(
+    'library: deleted movie disappears from the reusable list',
+    libraryAfterDelete.status === 200 && !libraryAfterDeleteBody.movies?.some((movie) => movie.key === createdBody.key),
+    `got ${libraryAfterDelete.status}`,
+  );
+
+  stubS3.close();
 } catch (e) {
   check(`run completed without harness error (${e.message})`, false);
 } finally {

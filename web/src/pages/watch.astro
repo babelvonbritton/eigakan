@@ -144,6 +144,9 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         onError(message) {
           setStatus(message, false);
         },
+        onSessionReady() {
+          void refreshLibrary();
+        },
         onPresence(names) {
           if (roomNames) roomNames.textContent = names.length ? `In this room: ${names.join(' + ')}` : '';
         },
@@ -165,9 +168,11 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
                 ? 'YOUTUBE'
                 : source.kind === 'mp4'
                   ? 'MP4'
-                  : source.kind === 'hls'
-                    ? 'HLS • ADAPTIVE'
-                    : 'LOCAL FILE';
+                  : source.kind === 'r2-file'
+                    ? 'R2 • UPLOADED'
+                    : source.kind === 'hls'
+                      ? 'HLS • ADAPTIVE'
+                      : 'LOCAL FILE';
           }
           if (source.kind === 'local-file') {
             // Show the video element so this viewer can pick their copy.
@@ -236,6 +241,157 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         facade.active = html5;
         showHtml5();
         client?.loadLocalFile(file, html5);
+      });
+
+      // ——— reusable uploaded-movie library (spans earlier rooms) ———
+      const libraryList = document.getElementById('library-list');
+      const libraryStatus = document.getElementById('library-status');
+      const refreshLibraryButton = document.getElementById('refresh-library') as HTMLButtonElement | null;
+      let libraryLoading = false;
+
+      const formatMovieSize = (size: number) => {
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let value = size;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+          value /= 1024;
+          unit++;
+        }
+        return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+      };
+      const formatMovieDate = (iso: string) => {
+        const date = new Date(iso);
+        return Number.isNaN(date.getTime())
+          ? ''
+          : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+      };
+
+      const refreshLibrary = async () => {
+        if (!client || !libraryList || !libraryStatus || libraryLoading) return;
+        libraryLoading = true;
+        if (refreshLibraryButton) refreshLibraryButton.disabled = true;
+        libraryStatus.textContent = 'Loading uploaded movies…';
+        try {
+          const movies = await client.listUploadedMovies();
+          libraryList.replaceChildren();
+          if (!movies.length) {
+            libraryStatus.textContent = 'No uploaded movies yet. Upload one here and it will remain available to later rooms.';
+            return;
+          }
+          libraryStatus.textContent =
+            `${movies.length} uploaded ${movies.length === 1 ? 'movie is' : 'movies are'} available. ` +
+            'They remain reusable until the bucket lifecycle removes them.';
+          for (const movie of movies) {
+            const item = document.createElement('div');
+            item.className = 'library-item';
+
+            const info = document.createElement('div');
+            info.className = 'library-info';
+            const title = document.createElement('div');
+            title.className = 'library-title';
+            title.textContent = movie.title;
+            const meta = document.createElement('div');
+            meta.className = 'library-meta';
+            const uploaded = formatMovieDate(movie.uploadedAt);
+            meta.textContent = uploaded
+              ? `${formatMovieSize(movie.size)} · Uploaded ${uploaded}`
+              : formatMovieSize(movie.size);
+            info.append(title, meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'library-actions';
+            const playButton = document.createElement('button');
+            playButton.type = 'button';
+            playButton.className = 'btn btn-brand';
+            playButton.textContent = 'Play for both';
+            playButton.addEventListener('click', () => {
+              if (sourceError) sourceError.textContent = '';
+              client?.loadSource({ kind: 'r2-file', ref: movie.key, title: movie.title });
+            });
+
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'btn btn-ghost library-delete';
+            deleteButton.textContent = 'Delete';
+            deleteButton.addEventListener('click', async () => {
+              if (!client) return;
+              if (!window.confirm(`Delete “${movie.title}” permanently for everyone? This cannot be undone.`)) return;
+              playButton.disabled = true;
+              deleteButton.disabled = true;
+              try {
+                await client.deleteUploadedMovie(movie.key);
+                await refreshLibrary();
+              } catch (err) {
+                if (sourceError) {
+                  sourceError.textContent = err instanceof Error ? err.message : 'Could not delete that movie.';
+                }
+                playButton.disabled = false;
+                deleteButton.disabled = false;
+              }
+            });
+
+            actions.append(playButton, deleteButton);
+            item.append(info, actions);
+            libraryList.append(item);
+          }
+        } catch (err) {
+          libraryList.replaceChildren();
+          libraryStatus.textContent = err instanceof Error ? err.message : 'Could not load the uploads library.';
+        } finally {
+          libraryLoading = false;
+          if (refreshLibraryButton) refreshLibraryButton.disabled = false;
+        }
+      };
+      refreshLibraryButton?.addEventListener('click', () => void refreshLibrary());
+
+      // ——— in-site movie upload (browser → R2, worker brokers) ———
+      const uploadInput = document.getElementById('upload-input') as HTMLInputElement | null;
+      const uploadBox = document.getElementById('upload-box');
+      const uploadLabel = document.getElementById('upload-label');
+      const uploadFill = document.getElementById('upload-fill') as HTMLElement | null;
+      let uploadAbort: AbortController | null = null;
+      document.getElementById('pick-upload')?.addEventListener('click', () => uploadInput?.click());
+      document.getElementById('upload-cancel')?.addEventListener('click', () => uploadAbort?.abort());
+      uploadInput?.addEventListener('change', async () => {
+        const file = uploadInput.files?.[0];
+        uploadInput.value = '';
+        if (!file) return;
+        if (!client) {
+          if (sourceError) sourceError.textContent = 'Enter the room first — pick your display name above.';
+          return;
+        }
+        if (sourceError) sourceError.textContent = '';
+        uploadAbort = new AbortController();
+        uploadBox?.classList.remove('hidden');
+        if (uploadFill) uploadFill.style.width = '0%';
+        if (uploadLabel) uploadLabel.textContent = `Uploading ${file.name} — 0%`;
+        try {
+          const key = await client.uploadMovie(
+            file,
+            (fraction) => {
+              const pct = Math.floor(fraction * 100);
+              if (uploadFill) uploadFill.style.width = `${pct}%`;
+              if (uploadLabel) uploadLabel.textContent = `Uploading ${file.name} — ${pct}%`;
+            },
+            uploadAbort.signal,
+          );
+          if (uploadLabel) uploadLabel.textContent = 'Uploaded — loading it for both of you…';
+          client.loadSource({ kind: 'r2-file', ref: key, title: file.name });
+          void refreshLibrary();
+          window.setTimeout(() => uploadBox?.classList.add('hidden'), 2500);
+        } catch (err) {
+          uploadBox?.classList.add('hidden');
+          if (sourceError) {
+            sourceError.textContent =
+              err instanceof DOMException && err.name === 'AbortError'
+                ? 'Upload cancelled.'
+                : err instanceof Error
+                  ? err.message
+                  : 'Upload failed.';
+          }
+        } finally {
+          uploadAbort = null;
+        }
       });
 
       // ——— invite + chat UI ———

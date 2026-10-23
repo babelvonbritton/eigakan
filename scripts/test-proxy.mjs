@@ -174,6 +174,24 @@ await check('gate: cookie admits the site', async () => {
   assert.equal(lastTarget, 'https://eigakan.pages.dev/');
 });
 
+await check('gate: PWA plumbing is public (browsers fetch it outside the session)', async () => {
+  for (const [path, target] of [
+    ['/eigakan/manifest.webmanifest', 'https://eigakan.pages.dev/manifest.webmanifest'],
+    ['/eigakan/sw.js', 'https://eigakan.pages.dev/sw.js'],
+    ['/eigakan/favicon.svg', 'https://eigakan.pages.dev/favicon.svg'],
+    ['/eigakan/icons/icon-192.png', 'https://eigakan.pages.dev/icons/icon-192.png'],
+  ]) {
+    const res = await grun(path);
+    assert.equal(res.status, 200, path);
+    assert.equal(lastTarget, target, path);
+  }
+});
+
+await check('gate: pages other than plumbing still redirect to login', async () => {
+  const res = await grun('/eigakan/watch/');
+  assert.equal(res.status, 302);
+});
+
 await check('gate: API refuses without the cookie (401)', async () => {
   const res = await grun('/eigakan-api/health');
   assert.equal(res.status, 401);

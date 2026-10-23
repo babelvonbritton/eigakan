@@ -14,6 +14,34 @@
     <input class="field" id="hls-prefix-input" placeholder="R2 HLS folder, e.g. movie-hls (private bucket)" autocomplete="off" />
     <button class="btn btn-ghost" type="submit">Load R2 HLS for both</button>
   </form>
+  <div class="row" style="margin-top:0.75rem">
+    <button class="btn btn-ghost" id="pick-upload" type="button">Upload a movie to the room…</button>
+    <input class="hidden" type="file" id="upload-input" accept="video/mp4,video/webm,.m4v" />
+  </div>
+  <div id="upload-box" class="hidden" style="margin-top:0.75rem">
+    <p class="hint" id="upload-label" style="margin:0 0 0.4rem">Uploading…</p>
+    <div style="height:8px;border-radius:999px;background:rgba(255,255,255,0.08);overflow:hidden">
+      <div id="upload-fill" style="height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,var(--amber,#EE8A1D),var(--ember,#D96A06));transition:width 0.2s ease"></div>
+    </div>
+    <button class="btn btn-ghost" id="upload-cancel" type="button" style="margin-top:0.5rem">Cancel upload</button>
+  </div>
+  <p class="hint">
+    Upload sends the file from your browser straight into the room's private
+    bucket (large files upload in pieces, so a shaky connection only retries
+    the piece it dropped). When it finishes, the movie loads for both of you.
+    Browser-playable files only: .mp4, .m4v, .webm, up to 5 GiB.
+  </p>
+  <section class="library" aria-labelledby="library-heading">
+    <div class="row library-head">
+      <h3 id="library-heading">Uploaded movies</h3>
+      <button class="btn btn-ghost" id="refresh-library" type="button">Refresh</button>
+    </div>
+    <p class="hint" id="library-status">
+      Join the room to see movies uploaded earlier. They remain reusable in
+      new rooms until the bucket lifecycle removes them.
+    </p>
+    <div class="library-list" id="library-list"></div>
+  </section>
   <p class="hint">
     HLS links adapt quality to each viewer's connection (great for R2-hosted movies — see
     <code>scripts/encode-hls.sh</code>). For a ladder in the <em>private</em> R2 bucket, use the

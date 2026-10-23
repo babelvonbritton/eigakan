@@ -47,5 +47,15 @@ const assetBase = base.endsWith('/') ? base : `${base}/`;
       window.addEventListener('scroll', onScroll, { passive: true });
       onScroll();
     </script>
+    <script is:inline define:vars={{ swUrl: `${assetBase}sw.js` }}>
+      // Register the (network-only) service worker so the site is
+      // installable as a PWA. Registration failing — old browser, blocked
+      // scope — must never affect the site itself, hence the empty catch.
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register(swUrl).catch(() => {});
+        });
+      }
+    </script>
   </body>
 </html>
