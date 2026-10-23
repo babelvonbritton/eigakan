@@ -240,7 +240,7 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
 
       // ——— invite + chat UI ———
       document.getElementById('copy-invite')?.addEventListener('click', async () => {
-        const link = `${window.location.origin}${basePath}watch?room=${code}`;
+        const link = `${window.location.origin}${basePath}watch/?room=${code}`;
         try {
           await navigator.clipboard.writeText(link);
           setStatus('Invite link copied — send it to your partner.', true);

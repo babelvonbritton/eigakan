@@ -110,7 +110,7 @@ const year = new Date().getFullYear();
     createBtn?.addEventListener('click', () => {
       chosenName();
       const code = generateRoomCode();
-      window.location.href = `${basePath}watch?room=${code}&host=1`;
+      window.location.href = `${basePath}watch/?room=${code}&host=1`;
     });
 
     const form = document.getElementById('join-form') as HTMLFormElement | null;
@@ -124,7 +124,7 @@ const year = new Date().getFullYear();
         return;
       }
       chosenName();
-      window.location.href = `${basePath}watch?room=${code}`;
+      window.location.href = `${basePath}watch/?room=${code}`;
     });
   </script>
 </BaseLayout>
