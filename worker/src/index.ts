@@ -202,19 +202,34 @@ export class Room implements DurableObject {
 
   private broadcastPresence(): void {
     const peers = this.state.getWebSockets();
-    const names = peers.map((peer) => {
+    const entries = peers.map((peer) => {
+      let name = 'Guest';
+      let isHost = false;
       try {
         const att = peer.deserializeAttachment() as SocketAttachment | null;
-        return att?.name || 'Guest';
+        if (att?.name) name = att.name;
+        isHost = att?.isHost === true;
       } catch {
-        return 'Guest';
+        // Keep the fallbacks above.
       }
+      return { peer, name, isHost };
     });
-    const message: ServerMessage = { type: 'presence', peers: peers.length, names };
-    const payload = JSON.stringify(message);
-    for (const peer of peers) {
+    const names = entries.map((entry) => entry.name);
+    // Personalized per recipient so each viewer can tell which person is
+    // themself (two viewers may even share a display name).
+    for (const recipient of peers) {
+      const message: ServerMessage = {
+        type: 'presence',
+        peers: peers.length,
+        names,
+        people: entries.map((entry) => ({
+          name: entry.name,
+          isHost: entry.isHost,
+          isYou: entry.peer === recipient,
+        })),
+      };
       try {
-        peer.send(payload);
+        recipient.send(JSON.stringify(message));
       } catch {
         // Ignore; close handler will reconcile.
       }

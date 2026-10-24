@@ -17,24 +17,32 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         <button class="btn btn-brand" type="submit">Enter room</button>
       </form>
     </div>
-    <div class="stage" id="stage">
-      <div class="placeholder" id="placeholder">
-        <div class="wordmark" style="font-size:2.4rem">EIGAKAN</div>
-        <p>
-          Waiting for a video.<br />
-          Paste a YouTube or MP4 link below — or both pick the same local file.
-        </p>
-      </div>
-      <video id="html5-player" controls playsinline style="display:none"></video>
-      <div id="yt-wrap" style="display:none; position:absolute; inset:0">
-        <div id="yt-player"></div>
-      </div>
-      <span class="badge" id="source-badge" style="display:none"></span>
-    </div>
+    <div class="theater-layout">
+      <div class="theater-main">
+        <div class="stage" id="stage">
+          <div class="placeholder" id="placeholder">
+            <div class="wordmark" style="font-size:2.4rem">EIGAKAN</div>
+            <p>
+              Waiting for a video.<br />
+              Paste a YouTube or MP4 link below — or both pick the same local file.
+            </p>
+          </div>
+          <video id="html5-player" controls playsinline style="display:none"></video>
+          <div id="yt-wrap" style="display:none; position:absolute; inset:0">
+            <div id="yt-player"></div>
+          </div>
+          <span class="badge" id="source-badge" style="display:none"></span>
+        </div>
 
-    <StatusBar />
-    <SourcePanel />
-    <ChatPanel />
+        <StatusBar />
+      </div>
+
+      <ChatPanel />
+
+      <div class="theater-below">
+        <SourcePanel />
+      </div>
+    </div>
   </main>
 
   <script>
@@ -57,7 +65,7 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
     const nameGate = document.getElementById('name-gate');
     const nameForm = document.getElementById('name-form') as HTMLFormElement | null;
     const nameInput = document.getElementById('name-input') as HTMLInputElement | null;
-    const roomNames = document.getElementById('room-names');
+    const roomPeople = document.getElementById('room-people');
     const isHost = params.get('host') === '1';
 
     function setStatus(text: string, on: boolean) {
@@ -147,8 +155,43 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
         onSessionReady() {
           void refreshLibrary();
         },
-        onPresence(names) {
-          if (roomNames) roomNames.textContent = names.length ? `In this room: ${names.join(' + ')}` : '';
+        onPresence(people) {
+          if (!roomPeople) return;
+          roomPeople.replaceChildren();
+          if (!people.length) {
+            roomPeople.style.display = 'none';
+            return;
+          }
+          roomPeople.style.display = '';
+          const kicker = document.createElement('span');
+          kicker.className = 'people-kicker';
+          kicker.textContent = 'In this room';
+          roomPeople.appendChild(kicker);
+          for (const person of people) {
+            const chip = document.createElement('span');
+            chip.className = 'person-chip';
+            const avatar = document.createElement('span');
+            avatar.className = 'person-avatar';
+            avatar.textContent = (person.name.trim().charAt(0) || 'G').toUpperCase();
+            chip.appendChild(avatar);
+            const label = document.createElement('span');
+            label.className = 'person-name';
+            label.textContent = person.name;
+            chip.appendChild(label);
+            if (person.isHost) {
+              const badge = document.createElement('span');
+              badge.className = 'role-badge';
+              badge.textContent = 'HOST';
+              chip.appendChild(badge);
+            }
+            if (person.isYou) {
+              const badge = document.createElement('span');
+              badge.className = 'you-badge';
+              badge.textContent = 'YOU';
+              chip.appendChild(badge);
+            }
+            roomPeople.appendChild(chip);
+          }
         },
         onChat(text, mine, name) {
           const p = document.createElement('p');

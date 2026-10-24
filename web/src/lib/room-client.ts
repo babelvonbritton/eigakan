@@ -5,6 +5,7 @@ import {
   type ClientMessage,
   type Heartbeat,
   type PlaybackEvent,
+  type PresencePerson,
   type ServerMessage,
   type VideoSource,
 } from '@eigakan/sync-core';
@@ -23,8 +24,8 @@ export interface RoomClientCallbacks {
   onError(message: string): void;
   /** The welcome message has supplied the room-session token; gated R2 calls may start. */
   onSessionReady?: () => void;
-  /** Display names of everyone currently in the room, in join order. */
-  onPresence(names: string[]): void;
+  /** Everyone currently in the room, in join order, with host/you flags. */
+  onPresence(people: PresencePerson[]): void;
   /** `name` is the sender's display name (own name for own messages). */
   onChat(text: string, mine: boolean, name: string): void;
   onPartnerBuffering(buffering: boolean): void;
@@ -375,7 +376,12 @@ export class RoomClient {
       // fallthrough — welcome also carries the peer count
       case 'presence': {
         const peers = message.peers;
-        if (message.type === 'presence') this.callbacks.onPresence(message.names);
+        if (message.type === 'presence') {
+          // Fallback covers a not-yet-redeployed worker that sends names only.
+          const people = message.people
+            ?? message.names.map((name) => ({ name, isHost: false, isYou: false }));
+          this.callbacks.onPresence(people);
+        }
         if (peers >= 2) this.callbacks.onStatus('paired', peers);
         else this.callbacks.onStatus('waiting', peers);
         break;

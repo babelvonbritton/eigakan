@@ -237,6 +237,17 @@ footer.site {
 
 /* ——— Theater (room page) ——— */
 .theater { padding: 5.4rem 4vw 2rem; max-width: 1180px; margin: 0 auto; }
+/* Room layout: one stacked column by default — player, then chat directly
+   below it, then the source panel. On wide screens the chat moves up beside
+   the player (see the min-width: 1024px block below). */
+.theater-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "main" "chat" "below";
+}
+.theater-main { grid-area: main; min-width: 0; }
+.theater-below { grid-area: below; min-width: 0; }
+.chat-panel { grid-area: chat; margin-top: 1rem; }
 .stage {
   position: relative;
   border-radius: 14px;
@@ -281,6 +292,31 @@ footer.site {
 .status-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b5f50; display: inline-block; }
 .status-dot.on { background: var(--amber-500); box-shadow: 0 0 10px rgba(238, 138, 29, 0.8); }
 .status-text { color: var(--text-dim); font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.5rem; }
+/* Who is in the room: one chip per person — initial avatar, name, and a
+   HOST / YOU badge — instead of a plain "A + B" text readout. */
+.room-people { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+.people-kicker {
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--gold-300); margin-right: 0.1rem;
+}
+.person-chip {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.22rem 0.65rem 0.22rem 0.28rem; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line);
+}
+.person-avatar {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 800; color: #241203;
+  background: linear-gradient(135deg, #ffc15c, #ee8a1d 55%, #d96a06);
+}
+.person-name { color: var(--text); font-size: 0.88rem; font-weight: 600; }
+.role-badge, .you-badge {
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.14em;
+  padding: 0.14rem 0.4rem; border-radius: 999px;
+}
+.role-badge { color: var(--gold-300); border: 1px solid rgba(238, 138, 29, 0.55); background: rgba(217, 106, 6, 0.16); }
+.you-badge { color: var(--text-dim); border: 1px solid var(--line); }
 input[type='file'].hidden { display: none; }
 .chat-log {
   margin-top: 1rem; max-height: 180px; overflow: auto;
@@ -308,6 +344,21 @@ input[type='file'].hidden { display: none; }
 .library-meta { color: var(--text-faint); font-size: 0.84rem; margin-top: 0.2rem; }
 .library-actions { display: flex; gap: 0.45rem; flex-wrap: wrap; }
 .library-delete { color: #ffb59d; }
+
+/* ——— Wide screens: chat beside the player, YouTube Live style ——— */
+@media (min-width: 1024px) {
+  /* Room for the chat column without shrinking the stage below its old size. */
+  .theater { max-width: 1440px; }
+  .theater-layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-areas: "main chat" "below below";
+    column-gap: 1.25rem;
+  }
+  /* The chat panel stretches to exactly the stage row's height; the log
+     grows to fill it and scrolls internally, the input stays at the bottom. */
+  .chat-panel { margin-top: 0; display: flex; flex-direction: column; min-height: 0; }
+  .chat-panel .chat-log { flex: 1 1 auto; min-height: 0; max-height: none; }
+}
 
 /* ——— Small screens (phones, narrow windows) ——— */
 @media (max-width: 720px) {
@@ -337,7 +388,7 @@ input[type='file'].hidden { display: none; }
   .library-actions .btn { flex: 1 1 0; justify-content: center; }
   .status-text { flex-wrap: wrap; }
   .chat-panel .btn { flex: 1 1 auto; justify-content: center; }
-  .chat-log { max-height: 140px; }
+  .chat-log { max-height: 34svh; }
   .tiles { grid-template-columns: 1fr; }
 }
 

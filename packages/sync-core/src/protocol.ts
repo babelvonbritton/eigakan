@@ -61,9 +61,19 @@ export type ClientMessage =
   /** Host only: terminate the room for everyone. The code stops working. */
   | { type: 'end-room' };
 
+/** One person in a room, as carried by presence updates. */
+export interface PresencePerson {
+  name: string;
+  /** This person created the room (they hold the End room power). */
+  isHost: boolean;
+  /** True for the entry that is the receiving viewer themself — the server
+   * personalizes each presence payload per recipient socket. */
+  isYou: boolean;
+}
+
 export type ServerMessage =
   | { type: 'welcome'; peerId: string; peers: number; sessionToken: string }
-  | { type: 'presence'; peers: number; names: string[] }
+  | { type: 'presence'; peers: number; names: string[]; people: PresencePerson[] }
   | { type: 'peer-event'; event: PlaybackEvent; serverReceivedAt: number }
   | { type: 'peer-heartbeat'; heartbeat: Heartbeat; serverReceivedAt: number }
   | { type: 'peer-chat'; text: string; name: string; serverReceivedAt: number }

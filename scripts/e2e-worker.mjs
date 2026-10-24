@@ -168,6 +168,25 @@ try {
   );
   check('presence carries both display names', true);
 
+  // v0.9.3: presence also carries structured people (host flag + a per-
+  // recipient isYou flag) for the avatar chips in the status bar.
+  const presA = await a.waitFor(
+    (m) => m.type === 'presence' && Array.isArray(m.people) && m.people.length === 2,
+    'presence with people at A',
+  );
+  const hostyAtA = presA.people.find((p) => p.name === 'Hosty');
+  const guestyAtA = presA.people.find((p) => p.name === 'Guesty');
+  check('presence people: host flagged at A', hostyAtA?.isHost === true, JSON.stringify(presA.people));
+  check('presence people: A sees itself as YOU', hostyAtA?.isYou === true && guestyAtA?.isYou === false);
+  const presB = await b.waitFor(
+    (m) => m.type === 'presence' && Array.isArray(m.people) && m.people.length === 2,
+    'presence with people at B',
+  );
+  const guestyAtB = presB.people.find((p) => p.name === 'Guesty');
+  const hostyAtB = presB.people.find((p) => p.name === 'Hosty');
+  check('presence people: B sees itself as YOU', guestyAtB?.isYou === true && hostyAtB?.isYou === false);
+  check('presence people: host flag agrees at B', hostyAtB?.isHost === true && guestyAtB?.isHost === false);
+
   // Third viewer is turned away — the max-2 rule, server-side.
   const c = new Client('C'); clients.push(c);
   await c.connect(CODE);
