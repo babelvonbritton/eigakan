@@ -240,7 +240,7 @@ function loginPage(error = '', status = 200, headers = {}, siteKey = '') {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       ...headers,
-      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}' https://challenges.cloudflare.com; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
+      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}' https://challenges.cloudflare.com; style-src 'unsafe-inline'; frame-src https://challenges.cloudflare.com; child-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
     },
   });
 }

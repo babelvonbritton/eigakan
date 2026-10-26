@@ -19,6 +19,8 @@ PAGES_ORIGIN = "https://eigakan.pages.dev"
 # The room worker's own origin. Replace <your-subdomain> with the workers.dev
 # subdomain shown after the Step 1 worker deploy.
 ROOM_ORIGIN = "https://eigakan-room.bvbritton.workers.dev"
+# turnstile site key
+TURNSTILE_SITE_KEY = "0x4AAAAAAFmagWzfZAhyZrJ1"
 
 # Routes are NOT set here on purpose: they attach this worker to YOUR domain,
 # so add them in the Cloudflare dashboard after deploying this worker

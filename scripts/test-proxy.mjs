@@ -287,6 +287,10 @@ await check('turnstile: login page renders the widget and a nonce CSP', async ()
   assert.ok(nonce, `CSP carries a nonce: ${csp}`);
   assert.ok(body.includes(`<script nonce="${nonce}">`), 'inline script carries the CSP nonce');
   assert.ok(csp.includes("frame-ancestors 'none'"));
+  // The widget renders inside a cross-origin iframe from challenges.cloudflare.com,
+  // so the CSP must explicitly allow framing it — default-src 'none' alone blocks it
+  // and no token can ever be produced (regression: every browser login failed).
+  assert.ok(csp.includes('frame-src https://challenges.cloudflare.com'), `CSP allows the Turnstile iframe: ${csp}`);
 });
 
 await check('turnstile: POST without a token is refused, no cookie', async () => {
