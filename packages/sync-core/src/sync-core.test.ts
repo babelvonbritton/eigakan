@@ -6,7 +6,9 @@ import {
   parseVideoSource,
   parseYouTubeVideoId,
   projectEventPosition,
+  projectFromServerTime,
   projectHeartbeatPosition,
+  ServerClock,
   type PlaybackEvent,
 } from './index';
 
@@ -41,6 +43,35 @@ describe('projectHeartbeatPosition', () => {
     const hb = { videoTime: 50, sentAt: 2_000, playing: true, playbackRate: 1, buffering: false };
     expect(projectHeartbeatPosition(hb, 2_500)).toBeCloseTo(50.5);
     expect(projectHeartbeatPosition({ ...hb, playing: false }, 2_500)).toBe(50);
+  });
+});
+
+describe('projectFromServerTime', () => {
+  it('projects from the server receipt stamp, not the sender wall clock', () => {
+    // Sender clock 500ms ahead of the server would have poisoned the old
+    // projection; from the server stamp the same message projects cleanly.
+    expect(projectFromServerTime(50, 1, true, 2_000, 2_500)).toBeCloseTo(50.5);
+    expect(projectFromServerTime(50, 1, false, 2_000, 2_500)).toBe(50);
+    expect(projectFromServerTime(50, 2, true, 2_000, 2_250)).toBeCloseTo(50.5);
+    expect(projectFromServerTime(50, 1, true, 2_000, 1_500)).toBe(50);
+  });
+});
+
+describe('ServerClock', () => {
+  it('estimates the server clock from the least-delayed sample', () => {
+    const clock = new ServerClock();
+    expect(clock.nowEstimate(10_000)).toBeNull();
+    // Two relays: one delayed 200ms, one delayed 20ms. The max sample
+    // (least delay) wins, so "now" tracks the server clock closely.
+    clock.observe(9_800, 10_000); // sample -200
+    clock.observe(10_080, 10_100); // sample -20
+    expect(clock.nowEstimate(10_200)).toBeCloseTo(10_180);
+  });
+  it('drops samples older than a minute', () => {
+    const clock = new ServerClock();
+    clock.observe(9_800, 10_000);
+    clock.observe(70_080, 70_100);
+    expect(clock.nowEstimate(70_200)).toBeCloseTo(70_180);
   });
 });
 

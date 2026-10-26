@@ -147,7 +147,8 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
             window.setTimeout(() => { window.location.href = basePath; }, 2000);
           }
           else if (status === 'connecting') setStatus('Connecting…', false);
-          else setStatus('Disconnected.', false);
+          else if (status === 'reconnecting') setStatus('Connection lost — reconnecting…', false);
+          else setStatus('Connection lost. Refresh the page to rejoin.', false);
         },
         onError(message) {
           setStatus(message, false);
@@ -197,6 +198,14 @@ const roomParam = Astro.url.searchParams.get('room') ?? '';
           const p = document.createElement('p');
           if (mine) p.className = 'me';
           p.textContent = `${name}: ${text}`;
+          chatLog?.appendChild(p);
+          if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
+        },
+        onChatUndelivered(text) {
+          // The message never left this browser: say so in the log itself
+          // instead of letting the sender believe it was sent.
+          const p = document.createElement('p');
+          p.textContent = `Not delivered — you are offline: ${text}`;
           chatLog?.appendChild(p);
           if (chatLog) chatLog.scrollTop = chatLog.scrollHeight;
         },

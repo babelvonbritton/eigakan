@@ -32,6 +32,21 @@ before applying it. A heartbeat every 4 s feeds drift correction — small
 gaps are closed with a temporary playback-rate nudge, gaps over ~1.5 s
 (e.g. after buffering) with a seek.
 
+Three reliability rules keep that loop honest. First, drift is projected
+from the room server's clock (the `serverReceivedAt` stamp the worker
+already puts on every relayed message), not from the sender's wall clock:
+comparing two devices' wall clocks baked their skew straight into the
+drift estimate. Second, a rate nudge from the engine is never mistaken
+for a user speed change — it never rewrites the shared base speed and is
+never re-broadcast, so the speed cannot ratchet away on its own. Third,
+a lost socket reconnects with backoff (1 s, 2 s, 4 s, capped at 8 s, up to
+10 attempts) and resyncs from the next heartbeat; the UI shows
+"Connection lost — reconnecting…" while it retries, chat sent while
+offline is marked "Not delivered" instead of silently vanishing, and a
+partner silent for ~12 s counts as a dead connection even if the socket
+still looks open. Buffering signals are debounced (~0.8 s) so a brief
+YouTube buffering blip doesn't pause both viewers.
+
 Video data never passes through Eigakan: YouTube and MP4 hosts stream
 directly to each viewer, and local files stay on-device. Eigakan only moves
 tiny control messages.
@@ -128,7 +143,7 @@ live at `https://<your-domain>/eigakan` behind the path-proxy worker in
 The proxy strips the prefix and forwards to the Pages / worker origins
 (WebSocket upgrades pass through), so visitors see one origin:
 `/eigakan` for the site, `/eigakan-api` for the rooms. Routing and the
-gate below are covered by `npm run test:proxy` (20 checks).
+gate below are covered by `npm run test:proxy` (27 checks).
 
 **Optional shared-password gate:** set the `SITE_PASSWORD` secret on the
 proxy worker (dashboard → Settings → Variables and Secrets; the value
@@ -143,6 +158,21 @@ Leave the secret unset to run without the gate — e.g. local development.
 For local gate testing, put `SITE_PASSWORD=…` in `proxy/.dev.vars`
 (git-ignored); `npm run dev` starts the proxy on http://localhost:8788 along
 with the web app and room worker.
+
+**Turnstile bot filter (optional, free on Cloudflare's Free plan):** set
+`TURNSTILE_SITE_KEY` (plain variable) and `TURNSTILE_SECRET_KEY` (runtime
+secret) on the proxy worker, after creating a Turnstile widget for the
+domain in the dashboard. A login POST must then carry a fresh Turnstile
+token, verified server-side against Cloudflare's siteverify endpoint
+*before* the password is checked; a failed verification is not a password
+guess and never touches the lockout counter. Leave the secret unset to skip
+the check (local development). The login page is served with a strict
+Content-Security-Policy (per-response nonce for its one inline script) and
+its error text is HTML-escaped. After deploying with Turnstile on, run one
+negative test: a login POST with no token must be refused even with the
+correct password. The Pages site itself carries a CSP via
+`web/public/_headers` (scripts and frames locked down; inline styles and
+arbitrary video origins are deliberate carve-outs — see the file).
 
 ## Mobile & installing as an app (PWA basics)
 

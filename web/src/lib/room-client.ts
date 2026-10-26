@@ -1,7 +1,9 @@
 import {
   decideDriftCorrection,
   projectEventPosition,
+  projectFromServerTime,
   projectHeartbeatPosition,
+  ServerClock,
   type ClientMessage,
   type Heartbeat,
   type PlaybackEvent,
@@ -17,6 +19,7 @@ export type RoomStatus =
   | 'paired' // partner present
   | 'full' // rejected: room already has two viewers
   | 'ended' // the host terminated the room for everyone
+  | 'reconnecting' // socket lost, retrying with backoff
   | 'closed';
 
 export interface RoomClientCallbacks {
@@ -28,6 +31,8 @@ export interface RoomClientCallbacks {
   onPresence(people: PresencePerson[]): void;
   /** `name` is the sender's display name (own name for own messages). */
   onChat(text: string, mine: boolean, name: string): void;
+  /** A chat the user tried to send while offline — shown, never silently dropped. */
+  onChatUndelivered?: (text: string) => void;
   onPartnerBuffering(buffering: boolean): void;
   onSourceLoaded(source: VideoSource): void;
 }
@@ -49,6 +54,12 @@ export interface RoomClientOptions {
 }
 
 const HEARTBEAT_INTERVAL_MS = 4_000;
+/** Silence longer than this from a present partner means the socket is dead even if it looks open. */
+const PEER_TIMEOUT_MS = 12_000;
+/** Reconnect backoff: 1s, 2s, 4s, then 8s; give up after this many attempts. */
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 8_000;
+const RECONNECT_MAX_ATTEMPTS = 10;
 
 /**
  * The sync engine. Owns the WebSocket to the room's Durable Object and keeps
@@ -67,7 +78,25 @@ export class RoomClient {
   private ws: WebSocket | null = null;
   private heartbeatTimer: number | null = null;
   private applyingRemoteUntil = 0;
+  /**
+   * Until this time, 'rate' reports from the player are the sync engine's
+   * own doing (a heartbeat nudge or a remote rate event), not the user.
+   * Without this guard, an engine nudge was mistaken for a user speed
+   * change: it rewrote baseRate and was broadcast, so every heartbeat
+   * nudged from an ever-higher base and the speed visibly ran away.
+   */
+  private engineRateUntil = 0;
   private baseRate = 1;
+  /** Shared server-clock estimate, fed by the serverReceivedAt stamps on relayed messages. */
+  private serverClock = new ServerClock();
+  /** Last time any message from the partner arrived; 0 until the first one. */
+  private lastPeerActivityAt = 0;
+  private seenPeerActivity = false;
+  private peerCount = 0;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempts = 0;
+  private userClosed = false;
+  private controlSubscribed = false;
   private currentSource: VideoSource | null = null;
   /** Room-session token from `welcome`; gates the R2 presign route. Dies with the socket. */
   private sessionToken: string | null = null;
@@ -87,18 +116,44 @@ export class RoomClient {
   ) {}
 
   connect(): void {
+    this.userClosed = false;
+    this.reconnectAttempts = 0;
+    // Subscribe exactly once: reconnects re-open the socket, they must
+    // never re-subscribe, or every local action would broadcast twice.
+    if (!this.controlSubscribed) {
+      this.controlSubscribed = true;
+      this.player.onLocalControl((action) => this.handleLocalControl(action));
+    }
+    this.connectSocket();
+    this.startHeartbeat();
+  }
+
+  /** Open (or re-open) the room socket. Reconnect-safe: no player subscriptions here. */
+  private connectSocket(): void {
+    if (this.userClosed || this.terminalStatusReceived) return;
     const wsBase = this.apiBase.replace(/^http/, 'ws');
     const query = new URLSearchParams({ name: this.options.displayName });
     if (this.options.isHost) query.set('host', '1');
+    let ws: WebSocket;
     try {
-      this.ws = new WebSocket(`${wsBase}/rooms/${this.roomCode}/ws?${query.toString()}`);
+      ws = new WebSocket(`${wsBase}/rooms/${this.roomCode}/ws?${query.toString()}`);
     } catch {
       this.connectionErrorReported = true;
       this.callbacks.onError('Could not connect to the room server. Check the room server URL and try again.');
+      this.scheduleReconnect();
       return;
     }
+    this.ws = ws;
 
-    this.ws.addEventListener('message', (event) => {
+    ws.addEventListener('open', () => {
+      // A fresh socket resets the backoff, and announcing our state right
+      // away lets the partner's drift logic realign us without waiting
+      // for the next heartbeat tick.
+      this.reconnectAttempts = 0;
+      this.sendHeartbeat();
+    });
+
+    ws.addEventListener('message', (event) => {
       let message: ServerMessage;
       try {
         message = JSON.parse(String(event.data)) as ServerMessage;
@@ -108,22 +163,56 @@ export class RoomClient {
       this.handleServerMessage(message);
     });
 
-    this.ws.addEventListener('error', () => {
+    ws.addEventListener('error', () => {
       this.connectionErrorReported = true;
       this.callbacks.onError('Could not connect to the room server. Check your connection and room server URL.');
     });
 
-    this.ws.addEventListener('close', () => {
+    ws.addEventListener('close', () => {
+      // A superseded socket (already replaced by a newer connectSocket)
+      // must not drive reconnects.
+      if (this.ws !== ws) return;
+      this.ws = null;
       this.stopHeartbeat();
       this.sessionToken = null;
-      if (!this.connectionErrorReported && !this.terminalStatusReceived) {
-        this.callbacks.onStatus('closed', 0);
-      }
+      if (this.userClosed || this.terminalStatusReceived) return;
+      this.scheduleReconnect();
     });
+  }
 
-    this.player.onLocalControl((action) => this.handleLocalControl(action));
+  /** Retry a lost socket with backoff; after repeated failures, stop and let the user rejoin manually. */
+  private scheduleReconnect(): void {
+    if (this.userClosed || this.terminalStatusReceived || this.reconnectTimer !== null) return;
+    if (this.reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+      this.callbacks.onStatus('closed', 0);
+      return;
+    }
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts++;
+    this.callbacks.onStatus('reconnecting', 0);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.userClosed || this.terminalStatusReceived) return;
+      this.connectionErrorReported = false;
+      this.connectSocket();
+      this.startHeartbeat();
+    }, delay);
+  }
 
-    this.heartbeatTimer = window.setInterval(() => this.sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = window.setInterval(() => {
+      this.sendHeartbeat();
+      this.checkPeerTimeout();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /** A socket that looks open but hasn't relayed a partner message in a while is half-dead. */
+  private checkPeerTimeout(): void {
+    if (!this.seenPeerActivity || this.peerCount < 2) return;
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - this.lastPeerActivityAt <= PEER_TIMEOUT_MS) return;
+    this.ws.close(); // the close handler drives the reconnect
   }
 
   /** Ask the room to load a source for both viewers. */
@@ -347,6 +436,11 @@ export class RoomClient {
   sendChat(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      // Never fake delivery: the sender must see that this one didn't go out.
+      this.callbacks.onChatUndelivered?.(trimmed);
+      return;
+    }
     this.send({ type: 'chat', text: trimmed, sentAt: Date.now() });
     this.callbacks.onChat(trimmed, true, this.options.displayName);
   }
@@ -361,6 +455,11 @@ export class RoomClient {
   }
 
   close(): void {
+    this.userClosed = true;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.stopHeartbeat();
     this.ws?.close();
     this.ws = null;
@@ -369,6 +468,16 @@ export class RoomClient {
   // ——— internals ———
 
   private handleServerMessage(message: ServerMessage): void {
+    if (
+      (message.type === 'peer-event' || message.type === 'peer-heartbeat' || message.type === 'peer-chat') &&
+      typeof message.serverReceivedAt === 'number'
+    ) {
+      // Every relayed message carries the server's clock: feed the shared
+      // clock estimate and prove the partner (and the socket) is alive.
+      this.serverClock.observe(message.serverReceivedAt, Date.now());
+      this.lastPeerActivityAt = Date.now();
+      this.seenPeerActivity = true;
+    }
     switch (message.type) {
       case 'welcome':
         this.sessionToken = message.sessionToken;
@@ -376,6 +485,7 @@ export class RoomClient {
       // fallthrough — welcome also carries the peer count
       case 'presence': {
         const peers = message.peers;
+        this.peerCount = peers;
         if (message.type === 'presence') {
           // Fallback covers a not-yet-redeployed worker that sends names only.
           const people = message.people
@@ -404,7 +514,7 @@ export class RoomClient {
         void this.applyRemoteEvent(message.event);
         break;
       case 'peer-heartbeat':
-        this.applyRemoteHeartbeat(message.heartbeat);
+        this.applyRemoteHeartbeat(message.heartbeat, message.serverReceivedAt);
         break;
       case 'peer-chat':
         this.callbacks.onChat(message.text, false, message.name);
@@ -416,6 +526,7 @@ export class RoomClient {
 
   private async applyRemoteEvent(event: PlaybackEvent): Promise<void> {
     this.applyingRemoteUntil = Date.now() + 750;
+    this.engineRateUntil = Date.now() + 750;
     if (event.kind === 'load' && event.source) {
       this.currentSource = event.source;
       if (event.source.kind !== 'local-file') {
@@ -461,22 +572,39 @@ export class RoomClient {
     }
   }
 
-  private applyRemoteHeartbeat(heartbeat: Heartbeat): void {
+  private applyRemoteHeartbeat(heartbeat: Heartbeat, serverReceivedAt?: number): void {
     this.callbacks.onPartnerBuffering(heartbeat.buffering || this.partnerBufferingHold);
     if (!this.currentSource) return;
     // Only correct against a playing partner; if both are paused there is
     // nothing to drift away from.
     if (!heartbeat.playing && !this.player.isPlaying()) return;
-    const partnerNow = projectHeartbeatPosition(heartbeat, Date.now());
+    const now = Date.now();
+    // Prefer the shared server clock: projecting from the sender's wall
+    // clock bakes inter-device clock skew into the drift estimate.
+    const serverNow = this.serverClock.nowEstimate(now);
+    const partnerNow =
+      serverNow !== null && typeof serverReceivedAt === 'number'
+        ? projectFromServerTime(
+            heartbeat.videoTime,
+            heartbeat.playbackRate,
+            heartbeat.playing,
+            serverReceivedAt,
+            serverNow,
+          )
+        : projectHeartbeatPosition(heartbeat, now);
     const decision = decideDriftCorrection(this.player.getTime(), partnerNow, this.baseRate);
     if (decision.action === 'seek') {
       this.applyingRemoteUntil = Date.now() + 750;
       this.player.seekTo(decision.seekToSeconds);
     } else if (decision.action === 'rate') {
+      // Engine nudge, not a user choice: mark it so the player's rate
+      // report is not mistaken for one (see handleLocalControl).
+      this.engineRateUntil = Date.now() + 750;
       this.player.setRate(decision.suggestedRate);
     } else {
       // Back in tolerance: restore the agreed base rate if we were nudging.
       if (Math.abs(this.player.getRate() - this.baseRate) > 0.001 && this.player.isPlaying()) {
+        this.engineRateUntil = Date.now() + 750;
         this.player.setRate(this.baseRate);
       }
     }
@@ -513,7 +641,14 @@ export class RoomClient {
       return;
     }
 
-    if (action === 'rate') this.baseRate = this.player.getRate();
+    if (action === 'rate') {
+      // A rate report caused by the engine's own nudge (or by a remote
+      // rate event) must not rewrite the user's base speed or be
+      // re-broadcast — that feedback loop used to walk the speed away
+      // on its own, with nobody touching a control.
+      if (Date.now() < this.engineRateUntil) return;
+      this.baseRate = this.player.getRate();
+    }
     this.sendEvent({
       kind: action,
       videoTime: this.player.getTime(),

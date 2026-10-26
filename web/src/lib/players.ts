@@ -31,6 +31,13 @@ export interface PlayerAdapter {
   destroy(): void;
 }
 
+/**
+ * A stall shorter than this is a blip (a quality switch, a hiccup), not a
+ * real stall: reporting it would pause both viewers and then auto-resume
+ * them for no reason. Only stalls that outlive the window count as buffering.
+ */
+const BUFFERING_DEBOUNCE_MS = 800;
+
 /** HTML5 <video> adapter — serves both remote MP4 URLs and local files (blob URLs). */
 export class Html5PlayerAdapter implements PlayerAdapter {
   readonly kind: VideoSource['kind'];
@@ -125,17 +132,33 @@ export class Html5PlayerAdapter implements PlayerAdapter {
   }
   onLocalControl(handler: (action: LocalControlAction) => void): () => void {
     let buffering = false;
+    let waiting = false;
+    let waitingTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearWaitingTimer = () => {
+      if (waitingTimer !== null) {
+        clearTimeout(waitingTimer);
+        waitingTimer = null;
+      }
+    };
     const onPlay = () => handler('play');
     const onPause = () => handler('pause');
     const onSeeked = () => handler('seek');
     const onRate = () => handler('rate');
     const onWaiting = () => {
-      if (!buffering) {
-        buffering = true;
-        handler('buffering-start');
-      }
+      waiting = true;
+      if (buffering || waitingTimer !== null) return;
+      // Debounced: only a stall that outlives the window reports buffering.
+      waitingTimer = setTimeout(() => {
+        waitingTimer = null;
+        if (waiting && !buffering) {
+          buffering = true;
+          handler('buffering-start');
+        }
+      }, BUFFERING_DEBOUNCE_MS);
     };
     const onPlaying = () => {
+      clearWaitingTimer();
+      waiting = false;
       if (buffering) {
         buffering = false;
         handler('buffering-end');
@@ -150,6 +173,7 @@ export class Html5PlayerAdapter implements PlayerAdapter {
     this.video.addEventListener('playing', onPlaying);
     this.video.addEventListener('canplay', onPlaying);
     return () => {
+      clearWaitingTimer();
       this.video.removeEventListener('play', onPlay);
       this.video.removeEventListener('pause', onPause);
       this.video.removeEventListener('seeked', onSeeked);
@@ -228,6 +252,7 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   private player: YTPlayer | null = null;
   private readonly ready: Promise<void>;
   private lastState = -1;
+  private bufferingTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly elementId: string) {
     this.ready = (async () => {
@@ -245,10 +270,33 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
             const handler = this.stateHandler;
             if (!handler) return;
             if (event.data === YT.PlayerState.PLAYING) {
+              if (this.bufferingTimer !== null) {
+                clearTimeout(this.bufferingTimer);
+                this.bufferingTimer = null;
+              }
               handler('buffering-end');
               handler('play');
-            } else if (event.data === YT.PlayerState.PAUSED) handler('pause');
-            else if (event.data === YT.PlayerState.BUFFERING) handler('buffering-start');
+            } else if (event.data === YT.PlayerState.PAUSED) {
+              if (this.bufferingTimer !== null) {
+                clearTimeout(this.bufferingTimer);
+                this.bufferingTimer = null;
+              }
+              handler('pause');
+            } else if (event.data === YT.PlayerState.BUFFERING) {
+              // Debounced: YouTube fires BUFFERING on quality switches and
+              // brief dips too. Only a stall that outlives the window
+              // pauses both viewers (see BUFFERING_DEBOUNCE_MS).
+              if (this.bufferingTimer === null) {
+                this.bufferingTimer = setTimeout(() => {
+                  this.bufferingTimer = null;
+                  if (this.lastState === YT.PlayerState.BUFFERING) handler('buffering-start');
+                }, BUFFERING_DEBOUNCE_MS);
+              }
+            } else if (this.bufferingTimer !== null) {
+              // Any other state (ended, cued, unstarted) cancels a pending blip.
+              clearTimeout(this.bufferingTimer);
+              this.bufferingTimer = null;
+            }
           },
           onPlaybackRateChange: () => this.stateHandler?.('rate'),
         },
@@ -295,6 +343,10 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
     };
   }
   destroy(): void {
+    if (this.bufferingTimer !== null) {
+      clearTimeout(this.bufferingTimer);
+      this.bufferingTimer = null;
+    }
     this.player?.destroy();
     this.player = null;
   }

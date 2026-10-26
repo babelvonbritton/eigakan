@@ -27,6 +27,17 @@
  * unset (local development), the gate is off and the proxy just forwards.
  * The password itself only ever lives as a Worker secret — never in the
  * repo, never in the built site.
+ *
+ * ——— Turnstile bot filter (optional, env.TURNSTILE_SECRET_KEY) ———
+ * When the secret is set, a login POST must also carry a fresh Turnstile
+ * token (field cf-turnstile-response), verified server-side against
+ * Cloudflare's siteverify endpoint before the password is checked. The
+ * widget's site key is env.TURNSTILE_SITE_KEY (public, rendered into the
+ * login form). A failed verification is not a password guess and never
+ * touches the lockout counter. With no secret configured, this step is
+ * skipped, mirroring the gate's own local-dev behaviour. The login page
+ * itself is served with a strict Content-Security-Policy (per-response
+ * nonce for its one inline script) and its error text is HTML-escaped.
  */
 
 const SITE_PREFIX = '/eigakan';
@@ -93,14 +104,53 @@ async function loginAttemptsFor(request, env) {
   return env.LOGIN_ATTEMPTS.get(env.LOGIN_ATTEMPTS.idFromName(key));
 }
 
-function lockedOutResponse(retryAfter) {
+function lockedOutResponse(retryAfter, siteKey = '') {
   const minutes = Math.max(1, Math.ceil(retryAfter / 60));
   return loginPage(`Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`, 429, {
     'Retry-After': String(retryAfter),
-  });
+  }, siteKey);
 }
 
-function loginPage(error = '', status = 200, headers = {}) {
+/** Escape text for interpolation into the login page. Current callers pass
+ * only fixed strings plus a server-computed integer, but the template must
+ * not depend on that invariant staying true forever. */
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+/** Verify a Turnstile token with Cloudflare. Fail closed: an unverifiable
+ * token is not a pass. The hostname must match the page the token was
+ * issued for, so a token minted for another site cannot be replayed here. */
+async function verifyTurnstile(token, secret, request) {
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret, response: token }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!data?.success) return false;
+    if (data.hostname && data.hostname !== new URL(request.url).hostname) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loginPage(error = '', status = 200, headers = {}, siteKey = '') {
+  // One fresh nonce per response for the eye-toggle inline script; the
+  // Content-Security-Policy below admits exactly that script plus the
+  // Turnstile script, and nothing else.
+  const nonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+  const widget = siteKey
+    ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>`
+    : '';
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -141,6 +191,7 @@ function loginPage(error = '', status = 200, headers = {}) {
     font-size: 1rem; font-weight: 700; color: #1a0f02;
     background: linear-gradient(92deg, #d96a06, #ee8a1d 60%, #ffc15c);
   }
+  .cf-turnstile { display: flex; justify-content: center; margin-bottom: 0.8rem; }
   .visibility-toggle {
     position: absolute; top: 50%; right: .65rem; transform: translateY(-50%);
     display: grid; place-items: center; width: 2rem; height: 2rem; padding: .35rem;
@@ -156,7 +207,7 @@ function loginPage(error = '', status = 200, headers = {}) {
   <form class="card" method="post" action="${LOGIN_PATH}">
     <div class="wordmark">EIGAKAN</div>
     <p>This theater is private. Enter the shared password to take your seat.</p>
-    <div class="error">${error}</div>
+    <div class="error">${escapeHtml(error)}</div>
     <div class="password-field">
       <input id="password" type="password" name="password" placeholder="Shared password" autocomplete="current-password" autofocus required />
       <button class="visibility-toggle" type="button" aria-label="Show password" title="Show password">
@@ -167,9 +218,10 @@ function loginPage(error = '', status = 200, headers = {}) {
         </svg>
       </button>
     </div>
+    ${widget}
     <button type="submit">Enter</button>
   </form>
-  <script>
+  <script nonce="${nonce}">
     const passwordInput = document.getElementById('password');
     const visibilityToggle = document.querySelector('.visibility-toggle');
     visibilityToggle.addEventListener('click', () => {
@@ -184,7 +236,12 @@ function loginPage(error = '', status = 200, headers = {}) {
 </html>`;
   return new Response(html, {
     status,
-    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      ...headers,
+      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}' https://challenges.cloudflare.com; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
+    },
   });
 }
 
@@ -228,12 +285,14 @@ export class LoginAttempts {
 export default {
   /**
    * @param {Request} request
-   * @param {{PAGES_ORIGIN: string, ROOM_ORIGIN: string, SITE_PASSWORD?: string, LOGIN_ATTEMPTS: DurableObjectNamespace<LoginAttempts>}} env
+   * @param {{PAGES_ORIGIN: string, ROOM_ORIGIN: string, SITE_PASSWORD?: string, TURNSTILE_SITE_KEY?: string, TURNSTILE_SECRET_KEY?: string, LOGIN_ATTEMPTS: DurableObjectNamespace<LoginAttempts>}} env
    */
   async fetch(request, env) {
     const url = new URL(request.url);
     const password = env.SITE_PASSWORD || '';
     const gateOn = password.length > 0;
+    const turnstileSiteKey = env.TURNSTILE_SITE_KEY || '';
+    const turnstileSecret = env.TURNSTILE_SECRET_KEY || '';
 
     // ——— the login page itself (never gated) ———
     if (url.pathname === LOGIN_PATH) {
@@ -242,10 +301,21 @@ export default {
         const attempts = await loginAttemptsFor(request, env);
         const rateLimit = await attempts.fetch('https://login-attempts/check', { method: 'POST' });
         if (rateLimit.status === 429) {
-          return lockedOutResponse(Number(rateLimit.headers.get('Retry-After')) || 300);
+          return lockedOutResponse(Number(rateLimit.headers.get('Retry-After')) || 300, turnstileSiteKey);
         }
 
         const form = await request.formData().catch(() => null);
+        // Bot filter first: a login attempt needs a fresh Turnstile token
+        // before the password is even looked at. A failed verification is
+        // not a password guess, so it never touches the lockout counter.
+        // With no secret configured (local dev) this step is skipped,
+        // mirroring how the gate itself is off without SITE_PASSWORD.
+        if (turnstileSecret) {
+          const token = String(form?.get('cf-turnstile-response') ?? '');
+          if (!token || !(await verifyTurnstile(token, turnstileSecret, request))) {
+            return loginPage('Verification failed. Please try again.', 200, {}, turnstileSiteKey);
+          }
+        }
         const presented = String(form?.get('password') ?? '');
         const [presentedDigest, passwordDigest] = await Promise.all([
           hmacHex(presented, 'eigakan-gate-v1'),
@@ -264,11 +334,11 @@ export default {
         }
         const failure = await attempts.fetch('https://login-attempts/failure', { method: 'POST' });
         if (failure.status === 429) {
-          return lockedOutResponse(Number(failure.headers.get('Retry-After')) || 300);
+          return lockedOutResponse(Number(failure.headers.get('Retry-After')) || 300, turnstileSiteKey);
         }
-        return loginPage('That password does not match. Try again.');
+        return loginPage('That password does not match. Try again.', 200, {}, turnstileSiteKey);
       }
-      return loginPage();
+      return loginPage('', 200, {}, turnstileSiteKey);
     }
 
     // Bare prefixes → trailing slash so relative resolution and the Astro

@@ -255,3 +255,75 @@ await check('gate: successful login clears that IP’s failure count', async () 
   });
   assert.equal(afterSuccess.status, 200);
 });
+
+// ——— Turnstile bot filter (env.TURNSTILE_SECRET_KEY set) ———
+// The worker verifies tokens through global fetch, so the stub answers
+// siteverify directly: only 'valid-turnstile-token' passes, for the test
+// origin's hostname. Everything else still forwards to the stub origin.
+globalThis.fetch = async (req, init) => {
+  // siteverify is called with a plain URL string + init, while forwards
+  // pass a Request; handle both shapes.
+  const url = typeof req === 'string' ? req : req.url;
+  if (url.includes('challenges.cloudflare.com/turnstile')) {
+    const bodyText = typeof req === 'string' ? String(init?.body ?? '') : await req.text();
+    const params = new URLSearchParams(bodyText);
+    const ok = params.get('response') === 'valid-turnstile-token' && params.get('secret') === 'test-turnstile-secret';
+    return Response.json({ success: ok, hostname: 'example.com' });
+  }
+  lastTarget = url;
+  return new Response('origin-body', { status: 200, headers: { 'x-origin': 'stub' } });
+};
+const turnstileEnv = { ...gatedEnv, TURNSTILE_SITE_KEY: 'test-sitekey', TURNSTILE_SECRET_KEY: 'test-turnstile-secret' };
+const trun = async (path, init) => worker.fetch(new Request('https://example.com' + path, init), turnstileEnv);
+
+await check('turnstile: login page renders the widget and a nonce CSP', async () => {
+  const res = await trun('/eigakan-login');
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.ok(body.includes('class="cf-turnstile"') && body.includes('data-sitekey="test-sitekey"'));
+  assert.ok(body.includes('https://challenges.cloudflare.com/turnstile/v0/api.js'));
+  const csp = res.headers.get('content-security-policy') ?? '';
+  const nonce = /script-src 'nonce-([^']+)'/.exec(csp)?.[1];
+  assert.ok(nonce, `CSP carries a nonce: ${csp}`);
+  assert.ok(body.includes(`<script nonce="${nonce}">`), 'inline script carries the CSP nonce');
+  assert.ok(csp.includes("frame-ancestors 'none'"));
+});
+
+await check('turnstile: POST without a token is refused, no cookie', async () => {
+  const res = await trun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': '192.0.2.20' },
+    body: new URLSearchParams({ password: 'correct horse battery' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('set-cookie'), null);
+});
+
+await check('turnstile: bad token is refused, no cookie', async () => {
+  const res = await trun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': '192.0.2.21' },
+    body: new URLSearchParams({ password: 'correct horse battery', 'cf-turnstile-response': 'bogus-token' }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('set-cookie'), null);
+});
+
+await check('turnstile: failed verifications do not feed the lockout', async () => {
+  const ip = '192.0.2.22';
+  for (let i = 0; i < 5; i++) {
+    const res = await trun('/eigakan-login', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': ip },
+      body: new URLSearchParams({ password: 'correct horse battery' }),
+    });
+    assert.equal(res.status, 200);
+  }
+  const res = await trun('/eigakan-login', {
+    method: 'POST',
+    headers: { 'CF-Connecting-IP': ip },
+    body: new URLSearchParams({ password: 'correct horse battery', 'cf-turnstile-response': 'valid-turnstile-token' }),
+  });
+  assert.equal(res.status, 302);
+  assert.ok((res.headers.get('set-cookie') ?? '').startsWith('eigakan_gate='));
+});
